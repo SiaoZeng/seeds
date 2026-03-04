@@ -52,6 +52,9 @@ seeds/
       update.ts               # sd update
       close.ts                # sd close
       dep.ts                  # sd dep add/remove/list
+      block.ts                # sd block
+      unblock.ts              # sd unblock
+      label.ts                # sd label add/remove/list/list-all
       sync.ts                 # sd sync
       blocked.ts              # sd blocked
       stats.ts                # sd stats
@@ -75,6 +78,9 @@ seeds/
       prime.test.ts
       onboard.test.ts
       completions.test.ts
+      label.test.ts
+      unblock.test.ts
+      sync.test.ts
     suggestions.test.ts       # Typo suggestion tests
     timing.test.ts            # --timing flag tests
 ```
@@ -126,6 +132,8 @@ sd create --title <text>               Create a new issue
 sd show <id>                           Show issue details
 sd list                                List issues with filters
   --status --type --assignee --limit
+  --label <label>                      Filter by label
+  --all                                Include closed issues
 sd ready                               Open issues with no unresolved blockers
 sd update <id>                         Update issue fields
 sd close <id> [<id2> ...]              Close one or more issues
@@ -133,7 +141,13 @@ sd close <id> [<id2> ...]              Close one or more issues
 sd dep add <issue> <depends-on>        Add dependency
 sd dep remove <issue> <depends-on>     Remove dependency
 sd dep list <issue>                    Show deps for an issue
+sd block <id> --by <blocker-id>        Mark issue as blocked
+sd unblock <id> --from <blocker-id>    Remove blocker (--all to clear all)
 sd blocked                             Show all blocked issues
+sd label add <id> <label>              Add label to issue
+sd label remove <id> <label>           Remove label from issue
+sd label list <id>                     List labels on issue
+sd label list-all                      List all labels across issues
 sd stats                               Project statistics
 sd sync                                Stage and commit .seeds/ changes
   --status                             Check without committing

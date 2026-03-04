@@ -67,14 +67,20 @@ Every command supports `--json` for structured output. Global flags: `-v`/`--ver
 | `sd init` | Initialize `.seeds/` in current directory |
 | `sd create --title <text>` | Create a new issue (`--type`, `--priority`, `--description`, `--assignee`) |
 | `sd show <id>` | Show issue details |
-| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--limit`) |
+| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--limit`, `--all`) |
 | `sd ready` | Open issues with no unresolved blockers |
 | `sd update <id>` | Update issue fields (`--status`, `--title`, `--priority`, `--assignee`, `--description`) |
 | `sd close <id> [<id2> ...]` | Close one or more issues (`--reason`) |
 | `sd dep add <issue> <depends-on>` | Add dependency |
 | `sd dep remove <issue> <depends-on>` | Remove dependency |
 | `sd dep list <issue>` | Show deps for an issue |
+| `sd block <id> --by <blocker-id>` | Mark issue as blocked by another |
+| `sd unblock <id> --from <blocker-id>` | Remove a blocker (`--all` to clear all) |
 | `sd blocked` | Show all blocked issues |
+| `sd label add <id> <label>` | Add a label to an issue |
+| `sd label remove <id> <label>` | Remove a label from an issue |
+| `sd label list <id>` | List labels on an issue |
+| `sd label list-all` | List all labels across issues |
 | `sd stats` | Project statistics |
 | `sd sync` | Stage and commit `.seeds/` changes (`--status`, `--dry-run`) |
 
