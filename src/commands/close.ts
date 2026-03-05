@@ -67,6 +67,20 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			};
 			issues[idx] = updated;
 			closed.push(id);
+
+			// Clean up blockedBy on issues this one blocks
+			const blockedIssueIds = issue.blocks ?? [];
+			for (const blockedId of blockedIssueIds) {
+				const blockedIdx = issues.findIndex((i) => i.id === blockedId);
+				if (blockedIdx === -1) continue;
+				const blockedIssue = issues[blockedIdx]!;
+				const remaining = (blockedIssue.blockedBy ?? []).filter((bid) => bid !== id);
+				issues[blockedIdx] = {
+					...blockedIssue,
+					blockedBy: remaining.length > 0 ? remaining : undefined,
+					updatedAt: now,
+				};
+			}
 		}
 		await writeIssues(dir, issues);
 	});
