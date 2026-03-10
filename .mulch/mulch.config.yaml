@@ -4,6 +4,7 @@ domains:
   - orchestration
   - agents
   - commands
+  - architecture
 governance:
   max_entries: 100
   warn_entries: 150
