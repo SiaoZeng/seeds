@@ -35,6 +35,22 @@ function gitCommonDir(cwd: string): string | null {
 	}
 }
 
+function gitDir(cwd: string): string | null {
+	try {
+		const result = Bun.spawnSync(["git", "rev-parse", "--git-dir"], {
+			cwd,
+			stdout: "pipe",
+			stderr: "pipe",
+		});
+		if ((result.exitCode ?? 0) !== 0) return null;
+		const raw = new TextDecoder().decode(result.stdout).trim();
+		if (!raw) return null;
+		return resolve(cwd, raw);
+	} catch {
+		return null;
+	}
+}
+
 function resolveWorktreeRoot(candidateSeedsDir: string): string {
 	const candidateRoot = dirname(candidateSeedsDir);
 	const common = gitCommonDir(candidateRoot);
@@ -56,12 +72,13 @@ function resolveWorktreeRoot(candidateSeedsDir: string): string {
 
 export function isInsideWorktree(dir?: string): boolean {
 	const cwd = dir ?? process.cwd();
+	// In a linked worktree, --git-dir points to .git/worktrees/<name> while
+	// --git-common-dir points to the main .git — they differ.
+	// In the main repo and in submodules, both return the same path.
+	const gd = gitDir(cwd);
 	const common = gitCommonDir(cwd);
-	if (!common) return false;
-
-	const mainRoot = common.endsWith(".git") ? dirname(common) : dirname(dirname(common));
-
-	return resolve(mainRoot) !== resolve(cwd);
+	if (!gd || !common) return false;
+	return gd !== common;
 }
 
 export async function findSeedsDir(startDir?: string): Promise<string> {

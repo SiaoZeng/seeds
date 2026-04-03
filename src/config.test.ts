@@ -120,4 +120,33 @@ describe("isInsideWorktree", () => {
 
 		expect(isInsideWorktree(plainDir)).toBe(false);
 	});
+
+	test("returns false inside a git submodule (no false positive)", () => {
+		// Set up parent repo
+		const parentRepo = join(tmpDir, "parent");
+		mkdirSync(parentRepo);
+		git(["init"], parentRepo);
+		git(["config", "user.email", "test@test.com"], parentRepo);
+		git(["config", "user.name", "Test"], parentRepo);
+		writeFileSync(join(parentRepo, "README.md"), "parent");
+		git(["add", "."], parentRepo);
+		git(["commit", "-m", "init parent"], parentRepo);
+
+		// Set up sub repo (to be used as submodule)
+		const subRepo = join(tmpDir, "sub");
+		mkdirSync(subRepo);
+		git(["init"], subRepo);
+		git(["config", "user.email", "test@test.com"], subRepo);
+		git(["config", "user.name", "Test"], subRepo);
+		writeFileSync(join(subRepo, "README.md"), "sub");
+		git(["add", "."], subRepo);
+		git(["commit", "-m", "init sub"], subRepo);
+
+		// Add sub as a submodule inside parent
+		git(["-c", "protocol.file.allow=always", "submodule", "add", subRepo, "sub"], parentRepo);
+		git(["commit", "-m", "add submodule"], parentRepo);
+
+		const submoduleDir = join(parentRepo, "sub");
+		expect(isInsideWorktree(submoduleDir)).toBe(false);
+	});
 });
