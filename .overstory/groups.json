@@ -50,8 +50,18 @@
 		"memberIssueIds": [
 			"seeds-d5e0"
 		],
-		"status": "active",
+		"status": "completed",
 		"createdAt": "2026-03-07T14:32:16.493Z",
+		"completedAt": "2026-04-03T20:00:25.220Z"
+	},
+	{
+		"id": "group-4ab5a5e7",
+		"name": "worktree-submodule-fix",
+		"memberIssueIds": [
+			"seeds-0074"
+		],
+		"status": "active",
+		"createdAt": "2026-04-03T20:02:11.795Z",
 		"completedAt": null
 	}
 ]
