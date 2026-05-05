@@ -7,15 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2026-05-04
+
 ### Added
 - `sd search <query>` command — case-insensitive substring search on issue title + description, with the same filters as `sd list` (`--status`, `--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--priority`, `--priority-max`) and shared `--limit`/`--sort`/`--format`/`--json` output flags. Includes closed issues by default; pass `--status open` to restrict.
 - `--sort <mode>` flag on `sd list` and `sd ready` (`priority|created|updated|id`)
 - `--format <mode>` flag on `sd list`, `sd ready`, `sd show`, `sd blocked`, and `sd stats` (`markdown|compact|plain|ids|json`). `--json` is preserved as an alias for `--format json`. The `ids` mode emits issue IDs one per line for shell pipelines: `sd list --label bug --format ids | xargs sd close`.
 - `sd ready` now accepts the same filters as `sd list`: `--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--limit`. Shared filter logic lives in `src/filter.ts`.
 - `--priority <levels>` and `--priority-max <n>` filters on `sd list` and `sd ready`. `--priority` matches an exact comma-separated set (e.g. `--priority 0,1` or `--priority P0,P1`); `--priority-max` keeps issues at or below a ceiling (e.g. `--priority-max 1` = P0+P1). Both accept numeric (0-4) and P-prefixed (P0-P4) forms consistent with `sd create` / `sd update`.
+- `--body` as alias for `--description` on `sd create` and `sd update`
 
 ### Changed
 - `sd list` and `sd ready` now sort by priority ascending (P0 first) by default, tie-broken by `createdAt` desc, instead of JSONL file order
+- Tightened lint and typecheck strictness (Biome `noNonNullAssertion=error`)
+
+### Fixed
+- `isInsideWorktree` submodule false positive — now compares resolved git-dir vs git-common-dir instead of path heuristics
+- `process.exit()` replaced with `process.exitCode` in version-json handler
 
 ## [0.2.5] - 2026-03-04
 
@@ -115,7 +123,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.2.5...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.3.0...HEAD
+[0.3.0]: https://github.com/jayminwest/seeds/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/jayminwest/seeds/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jayminwest/seeds/compare/v0.2.3...v0.2.4
 [0.2.3]: https://github.com/jayminwest/seeds/compare/v0.2.2...v0.2.3
