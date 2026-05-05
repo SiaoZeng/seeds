@@ -134,10 +134,13 @@ sd show <id>                           Show issue details
 sd list                                List issues with filters
   --status --type --assignee --limit
   --label <label>                      Filter by label
+  --priority <levels>                  Exact priority match (e.g. 0,1 or P0,P1)
+  --priority-max <n>                   Ceiling (e.g. --priority-max 1 = P0+P1)
   --all                                Include closed issues
 sd ready                               Open issues with no unresolved blockers
   --type --assignee --limit
   --label --label-any --unlabeled
+  --priority --priority-max
   --sort --format
 sd update <id>                         Update issue fields
 sd close <id> [<id2> ...]              Close one or more issues

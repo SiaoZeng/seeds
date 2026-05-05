@@ -211,3 +211,111 @@ describe("sd ready filters", () => {
 		expect(result.issues.map((i) => i.id)).toEqual([critBug, lowBug]);
 	});
 });
+
+describe("sd list/ready priority filters", () => {
+	test("--priority numeric exact match (single)", async () => {
+		const crit = await create("crit", 0, tmpDir);
+		await create("med", 2, tmpDir);
+		await create("low", 3, tmpDir);
+		const result = await runJson<{ issues: Array<{ id: string }> }>(
+			["list", "--priority", "0"],
+			tmpDir,
+		);
+		expect(result.issues.map((i) => i.id)).toEqual([crit]);
+	});
+
+	test("--priority comma-separated set", async () => {
+		const crit = await create("crit", 0, tmpDir);
+		const high = await create("high", 1, tmpDir);
+		await create("med", 2, tmpDir);
+		await create("low", 3, tmpDir);
+		const result = await runJson<{ issues: Array<{ id: string; priority: number }> }>(
+			["list", "--priority", "0,1"],
+			tmpDir,
+		);
+		const ids = result.issues.map((i) => i.id);
+		expect(ids).toContain(crit);
+		expect(ids).toContain(high);
+		expect(ids).toHaveLength(2);
+	});
+
+	test("--priority accepts P-prefixed forms", async () => {
+		const crit = await create("crit", 0, tmpDir);
+		const high = await create("high", 1, tmpDir);
+		await create("med", 2, tmpDir);
+		const result = await runJson<{ issues: Array<{ id: string }> }>(
+			["list", "--priority", "P0,P1"],
+			tmpDir,
+		);
+		const ids = result.issues.map((i) => i.id);
+		expect(ids).toContain(crit);
+		expect(ids).toContain(high);
+		expect(ids).toHaveLength(2);
+	});
+
+	test("--priority-max acts as ceiling (numeric)", async () => {
+		const crit = await create("crit", 0, tmpDir);
+		const high = await create("high", 1, tmpDir);
+		await create("med", 2, tmpDir);
+		await create("low", 3, tmpDir);
+		const result = await runJson<{ issues: Array<{ id: string }> }>(
+			["list", "--priority-max", "1"],
+			tmpDir,
+		);
+		const ids = result.issues.map((i) => i.id);
+		expect(ids).toContain(crit);
+		expect(ids).toContain(high);
+		expect(ids).toHaveLength(2);
+	});
+
+	test("--priority-max accepts P-prefixed form", async () => {
+		await create("crit", 0, tmpDir);
+		await create("high", 1, tmpDir);
+		const med = await create("med", 2, tmpDir);
+		const low = await create("low", 3, tmpDir);
+		const result = await runJson<{ issues: Array<{ id: string }> }>(
+			["list", "--priority-max", "P3", "--priority", "2,3"],
+			tmpDir,
+		);
+		const ids = result.issues.map((i) => i.id);
+		expect(ids).toContain(med);
+		expect(ids).toContain(low);
+		expect(ids).toHaveLength(2);
+	});
+
+	test("sd ready honors --priority", async () => {
+		const crit = await create("crit", 0, tmpDir);
+		await create("low", 3, tmpDir);
+		const result = await runJson<{ issues: Array<{ id: string }> }>(
+			["ready", "--priority", "0"],
+			tmpDir,
+		);
+		expect(result.issues.map((i) => i.id)).toEqual([crit]);
+	});
+
+	test("sd ready honors --priority-max", async () => {
+		const crit = await create("crit", 0, tmpDir);
+		const high = await create("high", 1, tmpDir);
+		await create("med", 2, tmpDir);
+		const result = await runJson<{ issues: Array<{ id: string }> }>(
+			["ready", "--priority-max", "1"],
+			tmpDir,
+		);
+		const ids = result.issues.map((i) => i.id);
+		expect(ids).toEqual([crit, high]);
+	});
+
+	test("rejects invalid --priority value", async () => {
+		await create("a", 2, tmpDir);
+		const { exitCode, stderr } = await run(["list", "--priority", "9"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("Invalid priority");
+	});
+
+	test("rejects invalid --priority-max value", async () => {
+		await create("a", 2, tmpDir);
+		const { exitCode, stderr } = await run(["list", "--priority-max", "Pfoo"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("Invalid priority");
+	});
+});

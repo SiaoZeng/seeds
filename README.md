@@ -67,8 +67,8 @@ Every command supports `--json` for structured output. `sd list`, `sd ready`, `s
 | `sd init` | Initialize `.seeds/` in current directory |
 | `sd create --title <text>` | Create a new issue (`--type`, `--priority`, `--description`, `--assignee`) |
 | `sd show <id>` | Show issue details |
-| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--limit`, `--all`, `--sort`, `--format`) |
-| `sd ready` | Open issues with no unresolved blockers (`--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--limit`, `--sort`, `--format`) |
+| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--priority`, `--priority-max`, `--limit`, `--all`, `--sort`, `--format`) |
+| `sd ready` | Open issues with no unresolved blockers (`--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--priority`, `--priority-max`, `--limit`, `--sort`, `--format`) |
 | `sd update <id>` | Update issue fields (`--status`, `--title`, `--priority`, `--assignee`, `--description`) |
 | `sd close <id> [<id2> ...]` | Close one or more issues (`--reason`) |
 | `sd dep add <issue> <depends-on>` | Add dependency |

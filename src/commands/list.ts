@@ -128,6 +128,8 @@ export function register(program: Command): void {
 		.option("--label <labels>", "Filter: must have ALL labels (comma-separated, AND)")
 		.option("--label-any <labels>", "Filter: must have any label (comma-separated, OR)")
 		.option("--unlabeled", "Filter: issues with no labels")
+		.option("--priority <levels>", "Filter by priority (comma-separated, e.g. 0,1 or P0,P1)")
+		.option("--priority-max <n>", "Filter to priority <= n (e.g. --priority-max 1 = P0+P1)")
 		.option("--limit <n>", "Max issues to show", "50")
 		.option("--sort <mode>", "Sort order (priority|created|updated|id)", "priority")
 		.option("--format <mode>", `Output format (${VALID_FORMATS.join("|")})`)
@@ -140,6 +142,8 @@ export function register(program: Command): void {
 				label?: string;
 				labelAny?: string;
 				unlabeled?: boolean;
+				priority?: string;
+				priorityMax?: string;
 				all?: boolean;
 				limit?: string;
 				sort?: string;
@@ -153,6 +157,8 @@ export function register(program: Command): void {
 				if (opts.label) args.push("--label", opts.label);
 				if (opts.labelAny) args.push("--label-any", opts.labelAny);
 				if (opts.unlabeled) args.push("--unlabeled");
+				if (opts.priority) args.push("--priority", opts.priority);
+				if (opts.priorityMax) args.push("--priority-max", opts.priorityMax);
 				if (opts.all) args.push("--all");
 				if (opts.limit) args.push("--limit", opts.limit);
 				if (opts.sort) args.push("--sort", opts.sort);

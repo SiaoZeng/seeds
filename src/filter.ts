@@ -6,6 +6,8 @@ export interface IssueFilterOptions {
 	label?: string;
 	labelAny?: string;
 	unlabeled?: boolean;
+	priority?: Set<number>;
+	priorityMax?: number;
 }
 
 function splitLabels(value: string): string[] {
@@ -13,6 +15,16 @@ function splitLabels(value: string): string[] {
 		.split(",")
 		.map((l) => l.trim().toLowerCase())
 		.filter(Boolean);
+}
+
+function parsePriorityToken(raw: string): number {
+	const trimmed = raw.trim();
+	const stripped = trimmed.toUpperCase().startsWith("P") ? trimmed.slice(1) : trimmed;
+	const n = Number.parseInt(stripped, 10);
+	if (Number.isNaN(n) || n < 0 || n > 4 || String(n) !== stripped) {
+		throw new Error(`Invalid priority "${trimmed}": must be 0-4 or P0-P4`);
+	}
+	return n;
 }
 
 export function applyIssueFilters(issues: Issue[], opts: IssueFilterOptions): Issue[] {
@@ -36,17 +48,41 @@ export function applyIssueFilters(issues: Issue[], opts: IssueFilterOptions): Is
 	if (opts.unlabeled) {
 		result = result.filter((i) => !i.labels || i.labels.length === 0);
 	}
+	if (opts.priority && opts.priority.size > 0) {
+		const set = opts.priority;
+		result = result.filter((i) => set.has(i.priority));
+	}
+	if (opts.priorityMax !== undefined) {
+		const max = opts.priorityMax;
+		result = result.filter((i) => i.priority <= max);
+	}
 	return result;
 }
 
 export function filterOptionsFromFlags(
 	flags: Record<string, string | boolean>,
 ): IssueFilterOptions {
+	let priority: Set<number> | undefined;
+	if (typeof flags.priority === "string") {
+		const tokens = flags.priority
+			.split(",")
+			.map((t) => t.trim())
+			.filter(Boolean);
+		if (tokens.length > 0) {
+			priority = new Set(tokens.map(parsePriorityToken));
+		}
+	}
+	const priorityMax =
+		typeof flags["priority-max"] === "string"
+			? parsePriorityToken(flags["priority-max"])
+			: undefined;
 	return {
 		type: typeof flags.type === "string" ? flags.type : undefined,
 		assignee: typeof flags.assignee === "string" ? flags.assignee : undefined,
 		label: typeof flags.label === "string" ? flags.label : undefined,
 		labelAny: typeof flags["label-any"] === "string" ? flags["label-any"] : undefined,
 		unlabeled: flags.unlabeled === true,
+		priority,
+		priorityMax,
 	};
 }
