@@ -1,6 +1,7 @@
 import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
 import { outputJson, printIssueOneLine } from "../output.ts";
+import { isSortMode, sortIssues, VALID_SORT_MODES } from "../sort.ts";
 import { readIssues } from "../store.ts";
 import type { Issue } from "../types.ts";
 
@@ -88,6 +89,19 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		issues = issues.filter((i: Issue) => !i.labels || i.labels.length === 0);
 	}
 
+	const sortFlag = typeof flags.sort === "string" ? flags.sort : "priority";
+	if (!isSortMode(sortFlag)) {
+		const msg = `Invalid --sort value: ${sortFlag}. Valid: ${VALID_SORT_MODES.join("|")}`;
+		if (jsonMode) {
+			outputJson({ success: false, command: "list", error: msg });
+		} else {
+			console.error(msg);
+		}
+		process.exitCode = 1;
+		return;
+	}
+	issues = sortIssues(issues, sortFlag);
+
 	issues = issues.slice(0, limit);
 
 	if (jsonMode) {
@@ -116,6 +130,7 @@ export function register(program: Command): void {
 		.option("--label-any <labels>", "Filter: must have any label (comma-separated, OR)")
 		.option("--unlabeled", "Filter: issues with no labels")
 		.option("--limit <n>", "Max issues to show", "50")
+		.option("--sort <mode>", "Sort order (priority|created|updated|id)", "priority")
 		.option("--json", "Output as JSON")
 		.action(
 			async (opts: {
@@ -127,6 +142,7 @@ export function register(program: Command): void {
 				unlabeled?: boolean;
 				all?: boolean;
 				limit?: string;
+				sort?: string;
 				json?: boolean;
 			}) => {
 				const args: string[] = [];
@@ -138,6 +154,7 @@ export function register(program: Command): void {
 				if (opts.unlabeled) args.push("--unlabeled");
 				if (opts.all) args.push("--all");
 				if (opts.limit) args.push("--limit", opts.limit);
+				if (opts.sort) args.push("--sort", opts.sort);
 				if (opts.json) args.push("--json");
 				await run(args);
 			},

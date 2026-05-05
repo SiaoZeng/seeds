@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `--sort <mode>` flag on `sd list` and `sd ready` (`priority|created|updated|id`)
+
+### Changed
+- `sd list` and `sd ready` now sort by priority ascending (P0 first) by default, tie-broken by `createdAt` desc, instead of JSONL file order
+
 ## [0.2.5] - 2026-03-04
 
 ### Added

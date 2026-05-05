@@ -67,8 +67,8 @@ Every command supports `--json` for structured output. Global flags: `-v`/`--ver
 | `sd init` | Initialize `.seeds/` in current directory |
 | `sd create --title <text>` | Create a new issue (`--type`, `--priority`, `--description`, `--assignee`) |
 | `sd show <id>` | Show issue details |
-| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--limit`, `--all`) |
-| `sd ready` | Open issues with no unresolved blockers |
+| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--limit`, `--all`, `--sort`) |
+| `sd ready` | Open issues with no unresolved blockers (`--sort`) |
 | `sd update <id>` | Update issue fields (`--status`, `--title`, `--priority`, `--assignee`, `--description`) |
 | `sd close <id> [<id2> ...]` | Close one or more issues (`--reason`) |
 | `sd dep add <issue> <depends-on>` | Add dependency |
