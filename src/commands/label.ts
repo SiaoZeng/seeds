@@ -77,9 +77,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		await withLock(issuesPath(dir), async () => {
 			const issues = await readIssues(dir);
 			const idx = issues.findIndex((i) => i.id === issueId);
-			if (idx === -1) throw new Error(`Issue not found: ${issueId}`);
+			const issue = issues[idx];
+			if (!issue) throw new Error(`Issue not found: ${issueId}`);
 
-			const issue = issues[idx]!;
 			const merged = Array.from(new Set([...(issue.labels ?? []), ...newLabels]));
 			issues[idx] = { ...issue, labels: merged, updatedAt: new Date().toISOString() };
 			await writeIssues(dir, issues);
@@ -106,9 +106,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		await withLock(issuesPath(dir), async () => {
 			const issues = await readIssues(dir);
 			const idx = issues.findIndex((i) => i.id === issueId);
-			if (idx === -1) throw new Error(`Issue not found: ${issueId}`);
+			const issue = issues[idx];
+			if (!issue) throw new Error(`Issue not found: ${issueId}`);
 
-			const issue = issues[idx]!;
 			const remaining = (issue.labels ?? []).filter((l) => !removeSet.has(l));
 			const updated: typeof issue = { ...issue, updatedAt: new Date().toISOString() };
 			if (remaining.length > 0) updated.labels = remaining;

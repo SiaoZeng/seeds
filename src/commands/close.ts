@@ -56,8 +56,8 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 		for (const id of ids) {
 			const idx = issues.findIndex((i) => i.id === id);
-			if (idx === -1) throw new Error(`Issue not found: ${id}`);
-			const issue = issues[idx]!;
+			const issue = issues[idx];
+			if (!issue) throw new Error(`Issue not found: ${id}`);
 			const updated: Issue = {
 				...issue,
 				status: "closed",
@@ -72,8 +72,8 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			const blockedIssueIds = issue.blocks ?? [];
 			for (const blockedId of blockedIssueIds) {
 				const blockedIdx = issues.findIndex((i) => i.id === blockedId);
-				if (blockedIdx === -1) continue;
-				const blockedIssue = issues[blockedIdx]!;
+				const blockedIssue = issues[blockedIdx];
+				if (!blockedIssue) continue;
 				const remaining = (blockedIssue.blockedBy ?? []).filter((bid) => bid !== id);
 				issues[blockedIdx] = {
 					...blockedIssue,

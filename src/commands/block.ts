@@ -24,13 +24,12 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	await withLock(issuesPath(dir), async () => {
 		const issues = await readIssues(dir);
 		const issueIdx = issues.findIndex((i) => i.id === issueId);
+		const issue = issues[issueIdx];
+		if (!issue) throw new Error(`Issue not found: ${issueId}`);
+
 		const blockerIdx = issues.findIndex((i) => i.id === blockerId);
-
-		if (issueIdx === -1) throw new Error(`Issue not found: ${issueId}`);
-		if (blockerIdx === -1) throw new Error(`Issue not found: ${blockerId}`);
-
-		const issue = issues[issueIdx]!;
-		const blocker = issues[blockerIdx]!;
+		const blocker = issues[blockerIdx];
+		if (!blocker) throw new Error(`Issue not found: ${blockerId}`);
 
 		const blockedBy = Array.from(new Set([...(issue.blockedBy ?? []), blockerId]));
 		const blocks = Array.from(new Set([...(blocker.blocks ?? []), issueId]));

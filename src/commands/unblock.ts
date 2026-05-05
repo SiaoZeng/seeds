@@ -32,9 +32,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	await withLock(issuesPath(dir), async () => {
 		const issues = await readIssues(dir);
 		const issueIdx = issues.findIndex((i) => i.id === issueId);
-		if (issueIdx === -1) throw new Error(`Issue not found: ${issueId}`);
+		const issue = issues[issueIdx];
+		if (!issue) throw new Error(`Issue not found: ${issueId}`);
 
-		const issue = issues[issueIdx]!;
 		const currentBlockers = issue.blockedBy ?? [];
 
 		if (allFlag) {
@@ -49,20 +49,20 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 			for (const bid of removed) {
 				const bidIdx = issues.findIndex((i) => i.id === bid);
-				if (bidIdx !== -1) {
-					const blocker = issues[bidIdx]!;
-					const newBlocks = (blocker.blocks ?? []).filter((id) => id !== issueId);
-					const updatedBlocker: Issue = { ...blocker, updatedAt: new Date().toISOString() };
-					if (newBlocks.length > 0) updatedBlocker.blocks = newBlocks;
-					else updatedBlocker.blocks = undefined;
-					issues[bidIdx] = updatedBlocker;
-				}
+				const blocker = issues[bidIdx];
+				if (!blocker) continue;
+				const newBlocks = (blocker.blocks ?? []).filter((id) => id !== issueId);
+				const updatedBlocker: Issue = { ...blocker, updatedAt: new Date().toISOString() };
+				if (newBlocks.length > 0) updatedBlocker.blocks = newBlocks;
+				else updatedBlocker.blocks = undefined;
+				issues[bidIdx] = updatedBlocker;
 			}
 		} else {
-			if (!currentBlockers.includes(blockerId!)) {
+			if (!blockerId) throw new Error("--from requires a blocker ID");
+			if (!currentBlockers.includes(blockerId)) {
 				throw new Error(`${issueId} is not blocked by ${blockerId}`);
 			}
-			removed = [blockerId!];
+			removed = [blockerId];
 			const remaining = currentBlockers.filter((bid) => bid !== blockerId);
 
 			const updatedIssue: Issue = { ...issue, updatedAt: new Date().toISOString() };
@@ -71,8 +71,8 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			issues[issueIdx] = updatedIssue;
 
 			const bidIdx = issues.findIndex((i) => i.id === blockerId);
-			if (bidIdx !== -1) {
-				const blocker = issues[bidIdx]!;
+			const blocker = issues[bidIdx];
+			if (blocker) {
 				const newBlocks = (blocker.blocks ?? []).filter((id) => id !== issueId);
 				const updatedBlocker: Issue = { ...blocker, updatedAt: new Date().toISOString() };
 				if (newBlocks.length > 0) updatedBlocker.blocks = newBlocks;

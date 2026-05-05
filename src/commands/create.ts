@@ -85,7 +85,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const dir = seedsDir ?? (await findSeedsDir());
 	const config = await readConfig(dir);
 
-	let createdId: string;
+	let createdId = "";
 	await withLock(issuesPath(dir), async () => {
 		const existing = await readIssues(dir);
 		const existingIds = new Set(existing.map((i) => i.id));
@@ -108,9 +108,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	});
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "create", id: createdId! });
+		outputJson({ success: true, command: "create", id: createdId });
 	} else {
-		printSuccess(`Created ${createdId!}`);
+		printSuccess(`Created ${createdId}`);
 	}
 }
 

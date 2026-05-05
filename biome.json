@@ -10,14 +10,23 @@
 			"recommended": true,
 			"correctness": {
 				"noUnusedVariables": "error",
-				"noUnusedImports": "error"
+				"noUnusedImports": "error",
+				"noUnusedFunctionParameters": "error",
+				"noUnusedPrivateClassMembers": "error"
 			},
 			"suspicious": {
 				"noExplicitAny": "error"
 			},
 			"style": {
-				"noNonNullAssertion": "warn",
-				"useConst": "error"
+				"noNonNullAssertion": "error",
+				"useConst": "error",
+				"useImportType": "error",
+				"useExportType": "error",
+				"useNodejsImportProtocol": "error",
+				"useTemplate": "error"
+			},
+			"complexity": {
+				"noUselessTypeConstraint": "error"
 			}
 		}
 	},

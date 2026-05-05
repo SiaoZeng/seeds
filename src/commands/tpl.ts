@@ -64,7 +64,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		const name = flags.name;
 		if (!name || typeof name !== "string") throw new Error("--name is required");
 
-		let createdId: string;
+		let createdId = "";
 		await withLock(templatesPath(dir), async () => {
 			const existing = await readTemplates(dir);
 			const existingIds = new Set(existing.map((t) => t.id));
@@ -75,9 +75,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		});
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "tpl create", id: createdId! });
+			outputJson({ success: true, command: "tpl create", id: createdId });
 		} else {
-			printSuccess(`Created template ${createdId!}: ${name}`);
+			printSuccess(`Created template ${createdId}: ${name}`);
 		}
 		return;
 	}
@@ -102,11 +102,12 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		await withLock(templatesPath(dir), async () => {
 			const templates = await readTemplates(dir);
 			const idx = templates.findIndex((t) => t.id === templateId);
-			if (idx === -1) throw new Error(`Template not found: ${templateId}`);
-			const tpl = templates[idx]!;
+			const tpl = templates[idx];
+			if (!tpl) throw new Error(`Template not found: ${templateId}`);
 			const step: TemplateStep = { title, type: typeVal, priority };
-			templates[idx] = { ...tpl, steps: [...tpl.steps, step] };
-			stepCount = templates[idx]?.steps.length;
+			const updated: Template = { ...tpl, steps: [...tpl.steps, step] };
+			templates[idx] = updated;
+			stepCount = updated.steps.length;
 			await writeTemplates(dir, templates);
 		});
 
@@ -201,8 +202,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 			// Wire dependencies: step[i+1] blocked by step[i]
 			for (let i = 1; i < newIssues.length; i++) {
-				const prev = newIssues[i - 1]!;
-				const curr = newIssues[i]!;
+				const prev = newIssues[i - 1];
+				const curr = newIssues[i];
+				if (!prev || !curr) continue;
 				curr.blockedBy = [prev.id];
 				prev.blocks = [curr.id];
 			}

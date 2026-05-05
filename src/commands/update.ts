@@ -55,9 +55,8 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	await withLock(issuesPath(dir), async () => {
 		const issues = await readIssues(dir);
 		const idx = issues.findIndex((i) => i.id === id);
-		if (idx === -1) throw new Error(`Issue not found: ${id}`);
-
-		const issue = issues[idx]!;
+		const issue = issues[idx];
+		if (!issue) throw new Error(`Issue not found: ${id}`);
 		const now = new Date().toISOString();
 		const patch: Partial<Issue> = { updatedAt: now };
 

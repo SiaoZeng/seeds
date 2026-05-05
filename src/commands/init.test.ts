@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 let tmpDir: string;
 
@@ -42,7 +42,7 @@ describe("sd init", () => {
 	test("creates config.yaml with project name derived from directory", async () => {
 		await run(["init"], tmpDir);
 		const config = await Bun.file(join(tmpDir, ".seeds", "config.yaml")).text();
-		const dirName = tmpDir.split("/").pop()!;
+		const dirName = basename(tmpDir);
 		expect(config).toContain(`project: "${dirName}"`);
 		expect(config).toContain("version:");
 	});
