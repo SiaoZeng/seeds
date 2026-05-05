@@ -1,6 +1,12 @@
 import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
-import { outputJson, printIssueOneLine } from "../output.ts";
+import { resolveFormat, stripAnsi, VALID_FORMATS } from "../format.ts";
+import {
+	formatIssueOneLine,
+	formatIssueOneLineCompact,
+	outputJson,
+	printIssueOneLine,
+} from "../output.ts";
 import { isSortMode, sortIssues, VALID_SORT_MODES } from "../sort.ts";
 import { readIssues } from "../store.ts";
 import type { Issue } from "../types.ts";
@@ -19,7 +25,17 @@ function parseSort(args: string[]): string {
 }
 
 export async function run(args: string[], seedsDir?: string): Promise<void> {
-	const jsonMode = args.includes("--json");
+	const fmt = resolveFormat(args);
+	const jsonMode = fmt.mode === "json";
+	if (fmt.error) {
+		if (jsonMode) {
+			outputJson({ success: false, command: "ready", error: fmt.error });
+		} else {
+			console.error(fmt.error);
+		}
+		process.exitCode = 1;
+		return;
+	}
 	const dir = seedsDir ?? (await findSeedsDir());
 	const issues = await readIssues(dir);
 
@@ -44,17 +60,32 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	}
 	ready = sortIssues(ready, sortFlag);
 
-	if (jsonMode) {
-		outputJson({ success: true, command: "ready", issues: ready, count: ready.length });
-	} else {
-		if (ready.length === 0) {
-			console.log("No ready issues.");
+	switch (fmt.mode) {
+		case "json":
+			outputJson({ success: true, command: "ready", issues: ready, count: ready.length });
 			return;
-		}
-		for (const issue of ready) {
-			printIssueOneLine(issue);
-		}
-		console.log(`\n${ready.length} ready issue(s)`);
+		case "ids":
+			for (const issue of ready) console.log(issue.id);
+			return;
+		case "compact":
+			for (const issue of ready) console.log(formatIssueOneLineCompact(issue));
+			return;
+		case "plain":
+			if (ready.length === 0) {
+				console.log("No ready issues.");
+				return;
+			}
+			for (const issue of ready) console.log(stripAnsi(formatIssueOneLine(issue)));
+			console.log(`\n${ready.length} ready issue(s)`);
+			return;
+		default:
+			if (ready.length === 0) {
+				console.log("No ready issues.");
+				return;
+			}
+			for (const issue of ready) printIssueOneLine(issue);
+			console.log(`\n${ready.length} ready issue(s)`);
+			return;
 	}
 }
 
@@ -63,10 +94,12 @@ export function register(program: Command): void {
 		.command("ready")
 		.description("Show open issues with no unresolved blockers")
 		.option("--sort <mode>", "Sort order (priority|created|updated|id)", "priority")
-		.option("--json", "Output as JSON")
-		.action(async (opts: { sort?: string; json?: boolean }) => {
+		.option("--format <mode>", `Output format (${VALID_FORMATS.join("|")})`)
+		.option("--json", "Output as JSON (alias for --format json)")
+		.action(async (opts: { sort?: string; format?: string; json?: boolean }) => {
 			const args: string[] = [];
 			if (opts.sort) args.push("--sort", opts.sort);
+			if (opts.format) args.push("--format", opts.format);
 			if (opts.json) args.push("--json");
 			await run(args);
 		});

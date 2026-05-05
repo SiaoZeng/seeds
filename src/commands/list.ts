@@ -1,6 +1,12 @@
 import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
-import { outputJson, printIssueOneLine } from "../output.ts";
+import { resolveFormat, stripAnsi, VALID_FORMATS } from "../format.ts";
+import {
+	formatIssueOneLine,
+	formatIssueOneLineCompact,
+	outputJson,
+	printIssueOneLine,
+} from "../output.ts";
 import { isSortMode, sortIssues, VALID_SORT_MODES } from "../sort.ts";
 import { readIssues } from "../store.ts";
 import type { Issue } from "../types.ts";
@@ -38,7 +44,17 @@ function parseArgs(args: string[]) {
 }
 
 export async function run(args: string[], seedsDir?: string): Promise<void> {
-	const jsonMode = args.includes("--json");
+	const fmt = resolveFormat(args);
+	const jsonMode = fmt.mode === "json";
+	if (fmt.error) {
+		if (jsonMode) {
+			outputJson({ success: false, command: "list", error: fmt.error });
+		} else {
+			console.error(fmt.error);
+		}
+		process.exitCode = 1;
+		return;
+	}
 	const flags = parseArgs(args);
 
 	const statusFilter = typeof flags.status === "string" ? flags.status : undefined;
@@ -104,17 +120,32 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	issues = issues.slice(0, limit);
 
-	if (jsonMode) {
-		outputJson({ success: true, command: "list", issues, count: issues.length });
-	} else {
-		if (issues.length === 0) {
-			console.log("No issues found.");
+	switch (fmt.mode) {
+		case "json":
+			outputJson({ success: true, command: "list", issues, count: issues.length });
 			return;
-		}
-		for (const issue of issues) {
-			printIssueOneLine(issue);
-		}
-		console.log(`\n${issues.length} issue(s)`);
+		case "ids":
+			for (const issue of issues) console.log(issue.id);
+			return;
+		case "compact":
+			for (const issue of issues) console.log(formatIssueOneLineCompact(issue));
+			return;
+		case "plain":
+			if (issues.length === 0) {
+				console.log("No issues found.");
+				return;
+			}
+			for (const issue of issues) console.log(stripAnsi(formatIssueOneLine(issue)));
+			console.log(`\n${issues.length} issue(s)`);
+			return;
+		default:
+			if (issues.length === 0) {
+				console.log("No issues found.");
+				return;
+			}
+			for (const issue of issues) printIssueOneLine(issue);
+			console.log(`\n${issues.length} issue(s)`);
+			return;
 	}
 }
 
@@ -131,7 +162,8 @@ export function register(program: Command): void {
 		.option("--unlabeled", "Filter: issues with no labels")
 		.option("--limit <n>", "Max issues to show", "50")
 		.option("--sort <mode>", "Sort order (priority|created|updated|id)", "priority")
-		.option("--json", "Output as JSON")
+		.option("--format <mode>", `Output format (${VALID_FORMATS.join("|")})`)
+		.option("--json", "Output as JSON (alias for --format json)")
 		.action(
 			async (opts: {
 				status?: string;
@@ -143,6 +175,7 @@ export function register(program: Command): void {
 				all?: boolean;
 				limit?: string;
 				sort?: string;
+				format?: string;
 				json?: boolean;
 			}) => {
 				const args: string[] = [];
@@ -155,6 +188,7 @@ export function register(program: Command): void {
 				if (opts.all) args.push("--all");
 				if (opts.limit) args.push("--limit", opts.limit);
 				if (opts.sort) args.push("--sort", opts.sort);
+				if (opts.format) args.push("--format", opts.format);
 				if (opts.json) args.push("--json");
 				await run(args);
 			},

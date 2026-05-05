@@ -58,7 +58,7 @@ sd sync
 
 ## Commands
 
-Every command supports `--json` for structured output. Global flags: `-v`/`--version`, `-q`/`--quiet`, `--verbose`, `--timing`. ANSI colors respect `NO_COLOR`.
+Every command supports `--json` for structured output. `sd list`, `sd ready`, `sd show`, `sd blocked`, and `sd stats` also accept `--format <markdown|compact|plain|ids|json>`; `--json` is an alias for `--format json`. The `ids` mode prints issue IDs one per line for shell pipelines, e.g. `sd list --label bug --format ids | xargs sd close`. Global flags: `-v`/`--version`, `-q`/`--quiet`, `--verbose`, `--timing`. ANSI colors respect `NO_COLOR`.
 
 ### Issue Commands
 
@@ -67,8 +67,8 @@ Every command supports `--json` for structured output. Global flags: `-v`/`--ver
 | `sd init` | Initialize `.seeds/` in current directory |
 | `sd create --title <text>` | Create a new issue (`--type`, `--priority`, `--description`, `--assignee`) |
 | `sd show <id>` | Show issue details |
-| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--limit`, `--all`, `--sort`) |
-| `sd ready` | Open issues with no unresolved blockers (`--sort`) |
+| `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--limit`, `--all`, `--sort`, `--format`) |
+| `sd ready` | Open issues with no unresolved blockers (`--sort`, `--format`) |
 | `sd update <id>` | Update issue fields (`--status`, `--title`, `--priority`, `--assignee`, `--description`) |
 | `sd close <id> [<id2> ...]` | Close one or more issues (`--reason`) |
 | `sd dep add <issue> <depends-on>` | Add dependency |
