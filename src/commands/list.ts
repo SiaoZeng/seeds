@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
+import { applyIssueFilters, filterOptionsFromFlags } from "../filter.ts";
 import { resolveFormat, stripAnsi, VALID_FORMATS } from "../format.ts";
 import {
 	formatIssueOneLine,
@@ -58,8 +59,6 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const flags = parseArgs(args);
 
 	const statusFilter = typeof flags.status === "string" ? flags.status : undefined;
-	const typeFilter = typeof flags.type === "string" ? flags.type : undefined;
-	const assigneeFilter = typeof flags.assignee === "string" ? flags.assignee : undefined;
 	const showAll = flags.all === true;
 	const limitStr = typeof flags.limit === "string" ? flags.limit : "50";
 	const limit = Number.parseInt(limitStr, 10) || 50;
@@ -72,38 +71,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	} else if (!showAll) {
 		issues = issues.filter((i: Issue) => i.status !== "closed");
 	}
-	if (typeFilter) issues = issues.filter((i: Issue) => i.type === typeFilter);
-	if (assigneeFilter) issues = issues.filter((i: Issue) => i.assignee === assigneeFilter);
-
-	const labelFilter = typeof flags.label === "string" ? flags.label : undefined;
-	const labelAnyFilter = typeof flags["label-any"] === "string" ? flags["label-any"] : undefined;
-	const unlabeled = flags.unlabeled === true;
-
-	if (labelFilter) {
-		const required = labelFilter
-			.split(",")
-			.map((l) => l.trim().toLowerCase())
-			.filter(Boolean);
-		issues = issues.filter((i: Issue) => {
-			const labels = i.labels ?? [];
-			return required.every((r) => labels.includes(r));
-		});
-	}
-	if (labelAnyFilter) {
-		const any = new Set(
-			labelAnyFilter
-				.split(",")
-				.map((l) => l.trim().toLowerCase())
-				.filter(Boolean),
-		);
-		issues = issues.filter((i: Issue) => {
-			const labels = i.labels ?? [];
-			return labels.some((l) => any.has(l));
-		});
-	}
-	if (unlabeled) {
-		issues = issues.filter((i: Issue) => !i.labels || i.labels.length === 0);
-	}
+	issues = applyIssueFilters(issues, filterOptionsFromFlags(flags));
 
 	const sortFlag = typeof flags.sort === "string" ? flags.sort : "priority";
 	if (!isSortMode(sortFlag)) {

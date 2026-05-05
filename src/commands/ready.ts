@@ -1,5 +1,6 @@
 import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
+import { applyIssueFilters, filterOptionsFromFlags } from "../filter.ts";
 import { resolveFormat, stripAnsi, VALID_FORMATS } from "../format.ts";
 import {
 	formatIssueOneLine,
@@ -11,17 +12,36 @@ import { isSortMode, sortIssues, VALID_SORT_MODES } from "../sort.ts";
 import { readIssues } from "../store.ts";
 import type { Issue } from "../types.ts";
 
-function parseSort(args: string[]): string {
-	for (let i = 0; i < args.length; i++) {
+function parseArgs(args: string[]): Record<string, string | boolean> {
+	const flags: Record<string, string | boolean> = {};
+	let i = 0;
+	while (i < args.length) {
 		const arg = args[i];
-		if (arg === "--sort") {
-			const next = args[i + 1];
-			if (next !== undefined && !next.startsWith("--")) return next;
-		} else if (arg?.startsWith("--sort=")) {
-			return arg.slice("--sort=".length);
+		if (!arg) {
+			i++;
+			continue;
+		}
+		if (arg.startsWith("--")) {
+			const key = arg.slice(2);
+			const eqIdx = key.indexOf("=");
+			if (eqIdx !== -1) {
+				flags[key.slice(0, eqIdx)] = key.slice(eqIdx + 1);
+				i++;
+			} else {
+				const next = args[i + 1];
+				if (next !== undefined && !next.startsWith("--")) {
+					flags[key] = next;
+					i += 2;
+				} else {
+					flags[key] = true;
+					i++;
+				}
+			}
+		} else {
+			i++;
 		}
 	}
-	return "priority";
+	return flags;
 }
 
 export async function run(args: string[], seedsDir?: string): Promise<void> {
@@ -36,6 +56,10 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		process.exitCode = 1;
 		return;
 	}
+	const flags = parseArgs(args);
+	const limitStr = typeof flags.limit === "string" ? flags.limit : "50";
+	const limit = Number.parseInt(limitStr, 10) || 50;
+
 	const dir = seedsDir ?? (await findSeedsDir());
 	const issues = await readIssues(dir);
 
@@ -47,7 +71,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		return blockers.every((bid) => closedIds.has(bid));
 	});
 
-	const sortFlag = parseSort(args);
+	ready = applyIssueFilters(ready, filterOptionsFromFlags(flags));
+
+	const sortFlag = typeof flags.sort === "string" ? flags.sort : "priority";
 	if (!isSortMode(sortFlag)) {
 		const msg = `Invalid --sort value: ${sortFlag}. Valid: ${VALID_SORT_MODES.join("|")}`;
 		if (jsonMode) {
@@ -59,6 +85,8 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		return;
 	}
 	ready = sortIssues(ready, sortFlag);
+
+	ready = ready.slice(0, limit);
 
 	switch (fmt.mode) {
 		case "json":
@@ -93,14 +121,38 @@ export function register(program: Command): void {
 	program
 		.command("ready")
 		.description("Show open issues with no unresolved blockers")
+		.option("--type <type>", "Filter by type (task|bug|feature|epic)")
+		.option("--assignee <name>", "Filter by assignee")
+		.option("--label <labels>", "Filter: must have ALL labels (comma-separated, AND)")
+		.option("--label-any <labels>", "Filter: must have any label (comma-separated, OR)")
+		.option("--unlabeled", "Filter: issues with no labels")
+		.option("--limit <n>", "Max issues to show", "50")
 		.option("--sort <mode>", "Sort order (priority|created|updated|id)", "priority")
 		.option("--format <mode>", `Output format (${VALID_FORMATS.join("|")})`)
 		.option("--json", "Output as JSON (alias for --format json)")
-		.action(async (opts: { sort?: string; format?: string; json?: boolean }) => {
-			const args: string[] = [];
-			if (opts.sort) args.push("--sort", opts.sort);
-			if (opts.format) args.push("--format", opts.format);
-			if (opts.json) args.push("--json");
-			await run(args);
-		});
+		.action(
+			async (opts: {
+				type?: string;
+				assignee?: string;
+				label?: string;
+				labelAny?: string;
+				unlabeled?: boolean;
+				limit?: string;
+				sort?: string;
+				format?: string;
+				json?: boolean;
+			}) => {
+				const args: string[] = [];
+				if (opts.type) args.push("--type", opts.type);
+				if (opts.assignee) args.push("--assignee", opts.assignee);
+				if (opts.label) args.push("--label", opts.label);
+				if (opts.labelAny) args.push("--label-any", opts.labelAny);
+				if (opts.unlabeled) args.push("--unlabeled");
+				if (opts.limit) args.push("--limit", opts.limit);
+				if (opts.sort) args.push("--sort", opts.sort);
+				if (opts.format) args.push("--format", opts.format);
+				if (opts.json) args.push("--json");
+				await run(args);
+			},
+		);
 }
