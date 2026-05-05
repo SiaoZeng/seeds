@@ -85,6 +85,7 @@ async function registerAll(): Promise<void> {
 		import("./commands/show.ts"),
 		import("./commands/list.ts"),
 		import("./commands/ready.ts"),
+		import("./commands/search.ts"),
 		import("./commands/update.ts"),
 		import("./commands/close.ts"),
 		import("./commands/dep.ts"),

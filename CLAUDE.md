@@ -50,6 +50,7 @@ seeds/
       show.ts                 # sd show
       list.ts                 # sd list
       ready.ts                # sd ready
+      search.ts               # sd search
       update.ts               # sd update
       close.ts                # sd close
       dep.ts                  # sd dep add/remove/list
@@ -142,6 +143,11 @@ sd ready                               Open issues with no unresolved blockers
   --label --label-any --unlabeled
   --priority --priority-max
   --sort --format
+sd search <query>                      Substring search on title + description
+  --status --type --assignee
+  --label --label-any --unlabeled
+  --priority --priority-max
+  --limit --sort --format
 sd update <id>                         Update issue fields
 sd close <id> [<id2> ...]              Close one or more issues
   --reason <text>

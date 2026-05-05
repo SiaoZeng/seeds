@@ -8,6 +8,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `sd search <query>` command — case-insensitive substring search on issue title + description, with the same filters as `sd list` (`--status`, `--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--priority`, `--priority-max`) and shared `--limit`/`--sort`/`--format`/`--json` output flags. Includes closed issues by default; pass `--status open` to restrict.
 - `--sort <mode>` flag on `sd list` and `sd ready` (`priority|created|updated|id`)
 - `--format <mode>` flag on `sd list`, `sd ready`, `sd show`, `sd blocked`, and `sd stats` (`markdown|compact|plain|ids|json`). `--json` is preserved as an alias for `--format json`. The `ids` mode emits issue IDs one per line for shell pipelines: `sd list --label bug --format ids | xargs sd close`.
 - `sd ready` now accepts the same filters as `sd list`: `--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--limit`. Shared filter logic lives in `src/filter.ts`.
