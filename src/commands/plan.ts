@@ -3,6 +3,7 @@ import { Command } from "commander";
 import { findSeedsDir, loadPlanTemplates, maxPlanDepth, readConfig } from "../config.ts";
 import { generateId } from "../id.ts";
 import { accent, brand, muted, outputJson, printSuccess } from "../output.ts";
+import { applyPlanBackref, buildPlanBackref } from "../plan-backref.ts";
 import { type ChildSummary, summarisePlanChildren } from "../plan-context.ts";
 import { inferDomain } from "../plan-domain.ts";
 import { enrichPriorArt, recordDecision } from "../plan-mulch.ts";
@@ -503,6 +504,14 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 					type: stepType,
 					priority: step.priority ?? 2,
 					plan_step_index: idx,
+					description: buildPlanBackref({
+						stepIndex: idx,
+						planId,
+						parentSeedId: seedId,
+						parentSeedTitle: seed.title,
+						templateName,
+						approach: submitted.sections.approach,
+					}),
 					createdAt: now,
 					updatedAt: now,
 				};
@@ -701,15 +710,36 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		}
 	}
 
-	// Build issues for newly spawned children only. Existing matched children
-	// are kept verbatim (PLAN_SPEC.md:389: "Existing matching children are kept").
+	// Build issues for newly spawned children. Existing matched children keep
+	// their fields (assignee, labels, status, etc.) but their backref block is
+	// refreshed in place so the snippet stays in sync with the live plan
+	// (seeds-76af).
+	const approach = (newSections as { approach?: unknown }).approach;
 	const newIssues: Issue[] = [];
 	for (let i = 0; i < steps.length; i++) {
 		const step = steps[i];
 		if (!step) continue;
 		const childId = finalChildIds[i];
 		if (!childId) continue;
-		if (usedOldIds.has(childId)) continue; // matched — leave untouched
+		if (usedOldIds.has(childId)) {
+			const matchedIdx = allIssues.findIndex((iss) => iss.id === childId);
+			const matched = allIssues[matchedIdx];
+			if (matched) {
+				allIssues[matchedIdx] = {
+					...matched,
+					description: applyPlanBackref(matched.description, {
+						stepIndex: i,
+						planId: existingPlan.id,
+						parentSeedId: seed.id,
+						parentSeedTitle: seed.title,
+						templateName,
+						approach,
+					}),
+					updatedAt: now,
+				};
+			}
+			continue;
+		}
 		const stepType = (step.type ?? "task") as Issue["type"];
 		const issue: Issue = {
 			id: childId,
@@ -718,6 +748,14 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 			type: stepType,
 			priority: step.priority ?? 2,
 			plan_step_index: i,
+			description: buildPlanBackref({
+				stepIndex: i,
+				planId: existingPlan.id,
+				parentSeedId: seed.id,
+				parentSeedTitle: seed.title,
+				templateName,
+				approach,
+			}),
 			createdAt: now,
 			updatedAt: now,
 		};

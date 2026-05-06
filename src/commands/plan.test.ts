@@ -1762,3 +1762,136 @@ describe("sd plan: built-in refactor template (Phase 5 / PLAN_SPEC.md:269)", () 
 		expect(names).not.toContain("behavior_invariant");
 	});
 });
+
+describe("sd plan submit: child backref block (seeds-76af)", () => {
+	type IssueRow = {
+		id: string;
+		title: string;
+		description?: string;
+		assignee?: string;
+		labels?: string[];
+		updatedAt: string;
+	};
+
+	async function readIssueRow(id: string): Promise<IssueRow> {
+		const issues = await readJsonl<IssueRow>(join(tmpDir, ".seeds/issues.jsonl"));
+		const found = issues.find((i) => i.id === id);
+		if (!found) throw new Error(`issue not found: ${id}`);
+		return found;
+	}
+
+	test("fresh submit populates each child description with backref fields", async () => {
+		const seedId = await createSeed(tmpDir, "Add OAuth2 device-flow authentication");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const result = JSON.parse(submit.stdout) as { plan_id: string; children: string[] };
+
+		const childB = await readIssueRow(result.children[1] ?? "");
+		expect(childB.description).toBeDefined();
+		const desc = childB.description ?? "";
+		expect(desc).toContain("seeds:plan-backref:start");
+		expect(desc).toContain(`Step 2 of plan ${result.plan_id}.`);
+		expect(desc).toContain(`Parent seed: ${seedId} — Add OAuth2 device-flow authentication`);
+		expect(desc).toContain("Plan template: feature");
+		expect(desc).toContain("Plan approach: Hardcoded TS template + AJV schema");
+		expect(desc).toContain(`Run \`sd plan show ${result.plan_id}\``);
+	});
+
+	test("plan_template children also receive a backref", async () => {
+		const seedId = await createSeed(tmpDir, "Parent seed", "feature");
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [] },
+			{
+				title: "Pre-planned step",
+				type: "task",
+				priority: 2,
+				blocks: [],
+				plan_template: "feature",
+			},
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const result = JSON.parse(submit.stdout) as { plan_id: string; children: string[] };
+		const subChild = await readIssueRow(result.children[1] ?? "");
+		expect(subChild.description ?? "").toContain(`Step 2 of plan ${result.plan_id}.`);
+	});
+
+	test("--overwrite refreshes the backref on retained children when approach changes", async () => {
+		const seedId = await createSeed(tmpDir, "Stable IDs");
+		const v1 = validPlanFor();
+		v1.sections.approach = "Original approach for revision 1.";
+		const planPath = await writePlanFile(tmpDir, v1);
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstResult = JSON.parse(first.stdout) as { plan_id: string; children: string[] };
+		const childId = firstResult.children[0] ?? "";
+		const before = await readIssueRow(childId);
+		expect(before.description ?? "").toContain("Plan approach: Original approach for revision 1.");
+
+		const v2 = validPlanFor();
+		v2.sections.approach = "Revised approach for revision 2.";
+		const planPath2 = await writePlanFile(tmpDir, v2);
+		await run(["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"], tmpDir);
+
+		const after = await readIssueRow(childId);
+		expect(after.description ?? "").toContain("Plan approach: Revised approach for revision 2.");
+		expect(after.description ?? "").not.toContain("Original approach for revision 1.");
+	});
+
+	test("--overwrite preserves assignee and labels on retained children", async () => {
+		const seedId = await createSeed(tmpDir, "Preserve fields");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstResult = JSON.parse(first.stdout) as { plan_id: string; children: string[] };
+		const childId = firstResult.children[0] ?? "";
+
+		await run(["update", childId, "--assignee", "alice"], tmpDir);
+		await run(["label", "add", childId, "needs-design"], tmpDir);
+
+		const beforeOverwrite = await readIssueRow(childId);
+		expect(beforeOverwrite.assignee).toBe("alice");
+		expect(beforeOverwrite.labels).toEqual(["needs-design"]);
+
+		const v2 = validPlanFor();
+		v2.sections.approach = "Revised approach for retention test.";
+		const planPath2 = await writePlanFile(tmpDir, v2);
+		const overwrite = await run(
+			["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"],
+			tmpDir,
+		);
+		expect(overwrite.exitCode).toBe(0);
+
+		const after = await readIssueRow(childId);
+		expect(after.assignee).toBe("alice");
+		expect(after.labels).toEqual(["needs-design"]);
+		expect(after.description ?? "").toContain(
+			"Plan approach: Revised approach for retention test.",
+		);
+	});
+
+	test("newly spawned children during overwrite get a fresh backref", async () => {
+		const seedId = await createSeed(tmpDir, "Spawn fresh on overwrite");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstResult = JSON.parse(first.stdout) as { plan_id: string; children: string[] };
+
+		const v2 = validPlanFor();
+		v2.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [] },
+			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
+			{ title: "Brand New Step", type: "task", priority: 2, blocks: [1] },
+		];
+		const planPath2 = await writePlanFile(tmpDir, v2);
+		const overwrite = await run(
+			["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"],
+			tmpDir,
+		);
+		const result = JSON.parse(overwrite.stdout) as { children: string[] };
+		const newChildId = result.children[2] ?? "";
+		expect(firstResult.children).not.toContain(newChildId);
+
+		const spawned = await readIssueRow(newChildId);
+		expect(spawned.description ?? "").toContain(`Step 3 of plan ${firstResult.plan_id}.`);
+		expect(spawned.description ?? "").toContain("Parent seed:");
+	});
+});
