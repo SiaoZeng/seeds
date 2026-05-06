@@ -13,6 +13,7 @@ export interface Issue {
 	convoy?: string;
 	plan_id?: string;
 	plan_step_index?: number;
+	requires_plan?: boolean;
 	createdAt: string;
 	updatedAt: string;
 	closedAt?: string;
@@ -40,6 +41,7 @@ export interface TemplateStep {
 	title: string;
 	type?: string;
 	priority?: number;
+	plan_template?: string;
 }
 
 export interface Template {
@@ -51,7 +53,11 @@ export interface Template {
 export interface Config {
 	project: string;
 	version: string;
+	max_plan_depth?: number;
 }
+
+// PLAN_SPEC.md:430 — display-only depth limit for `sd plan show` recursion.
+export const DEFAULT_MAX_PLAN_DEPTH = 3;
 
 // Plan template config — what `plan_templates:` in config.yaml resolves to.
 // Compiled into AJV schema by src/plan-schema.ts (Phase 2 task seeds-6bd8).

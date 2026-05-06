@@ -1,22 +1,31 @@
 import { existsSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import type { Config, PlanTemplate, SectionSpec } from "./types.ts";
-import { CONFIG_FILE, SECTION_KINDS, SEEDS_DIR_NAME } from "./types.ts";
+import { CONFIG_FILE, DEFAULT_MAX_PLAN_DEPTH, SECTION_KINDS, SEEDS_DIR_NAME } from "./types.ts";
 import { parseYaml, stringifyYaml, type YamlValue } from "./yaml.ts";
 
 export async function readConfig(seedsDir: string): Promise<Config> {
 	const file = Bun.file(join(seedsDir, CONFIG_FILE));
 	const content = await file.text();
 	const data = parseYaml(content);
-	return {
+	const config: Config = {
 		project: typeof data.project === "string" ? data.project : "seeds",
 		version: typeof data.version === "string" ? data.version : "1",
 	};
+	if (typeof data.max_plan_depth === "number" && Number.isInteger(data.max_plan_depth)) {
+		config.max_plan_depth = data.max_plan_depth;
+	}
+	return config;
 }
 
 export async function writeConfig(seedsDir: string, config: Config): Promise<void> {
-	const content = stringifyYaml({ project: config.project, version: config.version });
-	await Bun.write(join(seedsDir, CONFIG_FILE), content);
+	const out: Record<string, YamlValue> = { project: config.project, version: config.version };
+	if (config.max_plan_depth !== undefined) out.max_plan_depth = config.max_plan_depth;
+	await Bun.write(join(seedsDir, CONFIG_FILE), stringifyYaml(out));
+}
+
+export function maxPlanDepth(config: Config): number {
+	return config.max_plan_depth ?? DEFAULT_MAX_PLAN_DEPTH;
 }
 
 function gitCommonDir(cwd: string): string | null {

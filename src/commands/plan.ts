@@ -1,9 +1,9 @@
 import { dirname } from "node:path";
 import { Command } from "commander";
-import { findSeedsDir, loadPlanTemplates, readConfig } from "../config.ts";
+import { findSeedsDir, loadPlanTemplates, maxPlanDepth, readConfig } from "../config.ts";
 import { generateId } from "../id.ts";
 import { accent, brand, muted, outputJson, printSuccess } from "../output.ts";
-import { summarisePlanChildren } from "../plan-context.ts";
+import { type ChildSummary, summarisePlanChildren } from "../plan-context.ts";
 import { inferDomain } from "../plan-domain.ts";
 import { enrichPriorArt, recordDecision } from "../plan-mulch.ts";
 import { compilePlanTemplate, defaultTemplateForType } from "../plan-schema.ts";
@@ -216,7 +216,11 @@ async function runPrompt(
 	if (!seed) throw new Error(`Seed not found: ${seedId}`);
 
 	const templates = await loadPlanTemplates(dir);
-	const templateName = templateOverride ?? defaultTemplateForType(seed.type);
+	// PLAN_SPEC.md:329-342 — a child spawned from a step with plan_template
+	// inherits that template name unless --template overrides. The back-link
+	// to the parent plan is via plan_step_index + plan.children[].
+	const inheritedTemplate = templateOverride ? undefined : await resolveStepPlanTemplate(dir, seed);
+	const templateName = templateOverride ?? inheritedTemplate ?? defaultTemplateForType(seed.type);
 	const template = templates[templateName];
 	if (!template) {
 		const available = Object.keys(templates).join(", ");
@@ -267,6 +271,7 @@ interface SubmittedStep {
 	type?: string;
 	priority?: number;
 	blocks?: number[];
+	plan_template?: string;
 }
 
 interface SubmittedPlan {
@@ -275,6 +280,45 @@ interface SubmittedPlan {
 		steps: SubmittedStep[];
 		[key: string]: unknown;
 	};
+}
+
+// Resolve the plan_template declared on the parent plan's step that spawned
+// this seed (PLAN_SPEC.md:329-342). For plan_template children, plan_id is
+// unset, so we fall back to scanning plans by children[] membership.
+async function resolveStepPlanTemplate(dir: string, seed: Issue): Promise<string | undefined> {
+	if (seed.plan_step_index === undefined) return undefined;
+	const plans = await readPlans(dir);
+	let parentPlan: Plan | undefined;
+	if (seed.plan_id) {
+		parentPlan = plans.find((p) => p.id === seed.plan_id);
+	}
+	if (!parentPlan) {
+		parentPlan = plans.find((p) => p.children.includes(seed.id));
+	}
+	if (!parentPlan) return undefined;
+	const sections = parentPlan.sections as { steps?: SubmittedStep[] };
+	const step = sections.steps?.[seed.plan_step_index];
+	return step?.plan_template;
+}
+
+// PLAN_SPEC.md:329-338 — submit-time check that step.plan_template references
+// a template defined in plan_templates: in config.yaml. Returns null on success
+// or a one-line error message pointing the author at the template config.
+function validatePlanTemplateRefs(
+	steps: SubmittedStep[],
+	templates: Record<string, PlanTemplate>,
+): string | null {
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		if (!step) continue;
+		const ref = step.plan_template;
+		if (!ref) continue;
+		if (!templates[ref]) {
+			const available = Object.keys(templates).join(", ");
+			return `step ${i} (${step.title}): plan_template '${ref}' is not defined. Available: ${available}. Add it under plan_templates: in .seeds/config.yaml.`;
+		}
+	}
+	return null;
 }
 
 async function readPlanInput(planFile: string): Promise<string> {
@@ -332,6 +376,12 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 	}
 
 	const submitted = parsed as SubmittedPlan;
+	const refError = validatePlanTemplateRefs(submitted.sections.steps, templates);
+	if (refError) {
+		process.stderr.write(`${refError}\n`);
+		process.exitCode = 1;
+		return;
+	}
 	const config = await readConfig(dir);
 
 	let createdPlanId = "";
@@ -414,11 +464,20 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 					status: "open",
 					type: stepType,
 					priority: step.priority ?? 2,
-					plan_id: planId,
 					plan_step_index: idx,
 					createdAt: now,
 					updatedAt: now,
 				};
+				// PLAN_SPEC.md:329-342 — when the parent step declares a
+				// plan_template, the child needs its own sub-plan first. Mark it
+				// requires_plan and leave plan_id unset so it does not back-link
+				// to the parent plan; the back-link is via children: [] on the
+				// parent plan row + plan_step_index on the child.
+				if (step.plan_template) {
+					issue.requires_plan = true;
+				} else {
+					issue.plan_id = planId;
+				}
 				const deps = step.blocks ?? [];
 				if (deps.length > 0) {
 					const blockedByIds: string[] = [];
@@ -620,11 +679,15 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 			status: "open",
 			type: stepType,
 			priority: step.priority ?? 2,
-			plan_id: existingPlan.id,
 			plan_step_index: i,
 			createdAt: now,
 			updatedAt: now,
 		};
+		if (step.plan_template) {
+			issue.requires_plan = true;
+		} else {
+			issue.plan_id = existingPlan.id;
+		}
 		const deps = step.blocks ?? [];
 		const blockedByIds: string[] = [];
 		for (const j of deps) {
@@ -674,37 +737,62 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 	return { finalChildIds, revision: updatedPlan.revision, obsolete };
 }
 
-async function runShow(planId: string, jsonMode: boolean): Promise<void> {
-	const dir = await findSeedsDir();
-	const plans = await readPlans(dir);
-	const plan = plans.find((p) => p.id === planId);
-	if (!plan) {
-		throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
-	}
-	const issues = await readIssues(dir);
-	const children = summarisePlanChildren(plan, issues);
+interface PlanTreeNode {
+	plan: Plan;
+	children: ChildSummary[];
+	children_plans: PlanTreeEntry[];
+}
 
-	if (jsonMode) {
-		outputJson({ success: true, command: "plan show", plan, children });
-		return;
-	}
+interface PlanTreeTruncation {
+	plan_id: string;
+	truncated: true;
+	hint: string;
+}
 
-	console.log(`${accent.bold(plan.id)}  ${brand(plan.status)}  ${muted(`rev ${plan.revision}`)}`);
-	console.log(`Seed:     ${accent(plan.seed)}`);
-	console.log(`Template: ${plan.template}`);
-	console.log(`Created:  ${muted(plan.createdAt)}`);
-	console.log(`Updated:  ${muted(plan.updatedAt)}`);
-	if (plan.outcome) {
-		const note = plan.outcomeNote ? ` — ${plan.outcomeNote}` : "";
-		console.log(`Outcome:  ${plan.outcome}${note}`);
-	}
-	if (!plan.reviewedBy) {
-		console.log(muted("Review suggested (no reviewer recorded yet)"));
-	} else {
-		console.log(`Reviewed: ${plan.reviewedBy}`);
-	}
+type PlanTreeEntry = PlanTreeNode | PlanTreeTruncation;
 
-	console.log("");
+function buildPlansBySeed(plans: Plan[]): Map<string, Plan> {
+	const out = new Map<string, Plan>();
+	for (const p of plans) {
+		const existing = out.get(p.seed);
+		if (!existing || existing.updatedAt < p.updatedAt) out.set(p.seed, p);
+	}
+	return out;
+}
+
+function truncationHint(planId: string): string {
+	return `depth limit reached — use \`sd plan show ${planId}\` to drill in`;
+}
+
+// PLAN_SPEC.md:340, 425, 430 — recurse through nested plans up to max_plan_depth.
+// Depth is 1-indexed: the root plan is at depth 1, nested plans start at 2.
+function buildPlanTree(
+	plan: Plan,
+	issues: Issue[],
+	plansBySeed: Map<string, Plan>,
+	depth: number,
+	maxDepth: number,
+): PlanTreeNode {
+	const childrenSummary = summarisePlanChildren(plan, issues);
+	const childrenPlans: PlanTreeEntry[] = [];
+	for (const childId of plan.children) {
+		const sub = plansBySeed.get(childId);
+		if (!sub) continue;
+		const nextDepth = depth + 1;
+		if (nextDepth > maxDepth) {
+			childrenPlans.push({
+				plan_id: sub.id,
+				truncated: true,
+				hint: truncationHint(sub.id),
+			});
+		} else {
+			childrenPlans.push(buildPlanTree(sub, issues, plansBySeed, nextDepth, maxDepth));
+		}
+	}
+	return { plan, children: childrenSummary, children_plans: childrenPlans };
+}
+
+function renderPlanSections(plan: Plan): void {
 	console.log(brand("Sections:"));
 	const order = ["context", "approach", "alternatives", "steps", "risks", "acceptance"];
 	const knownKeys = new Set(order);
@@ -739,15 +827,87 @@ async function runShow(planId: string, jsonMode: boolean): Promise<void> {
 		}
 		console.log(`    ${JSON.stringify(value)}`);
 	}
+}
 
-	console.log("");
-	console.log(brand(`Children (${children.length}):`));
+function renderNestedPlanHuman(entry: PlanTreeEntry, indent: string): void {
+	if ("truncated" in entry) {
+		console.log(`${indent}${muted(entry.hint)}`);
+		return;
+	}
+	const { plan, children, children_plans } = entry;
+	console.log(
+		`${indent}${brand("Sub-plan:")} ${accent.bold(plan.id)}  ${muted(`[${plan.status}]`)}  ${muted(`rev ${plan.revision}`)}  ${muted(`seed=${plan.seed}`)}`,
+	);
+	console.log(`${indent}${muted(`Children (${children.length}):`)}`);
+	const childIndent = `${indent}  `;
 	if (children.length === 0) {
-		console.log(muted("  (none)"));
+		console.log(`${childIndent}${muted("(none)")}`);
 	} else {
 		for (const c of children) {
+			console.log(`${childIndent}${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}`);
+		}
+	}
+	for (const sub of children_plans) {
+		console.log("");
+		renderNestedPlanHuman(sub, childIndent);
+	}
+}
+
+async function runShow(planId: string, jsonMode: boolean): Promise<void> {
+	const dir = await findSeedsDir();
+	const config = await readConfig(dir);
+	const maxDepth = maxPlanDepth(config);
+	const plans = await readPlans(dir);
+	const plan = plans.find((p) => p.id === planId);
+	if (!plan) {
+		throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
+	}
+	const issues = await readIssues(dir);
+	const plansBySeed = buildPlansBySeed(plans);
+	const tree = buildPlanTree(plan, issues, plansBySeed, 1, maxDepth);
+
+	if (jsonMode) {
+		outputJson({
+			success: true,
+			command: "plan show",
+			plan,
+			children: tree.children,
+			children_plans: tree.children_plans,
+		});
+		return;
+	}
+
+	console.log(`${accent.bold(plan.id)}  ${brand(plan.status)}  ${muted(`rev ${plan.revision}`)}`);
+	console.log(`Seed:     ${accent(plan.seed)}`);
+	console.log(`Template: ${plan.template}`);
+	console.log(`Created:  ${muted(plan.createdAt)}`);
+	console.log(`Updated:  ${muted(plan.updatedAt)}`);
+	if (plan.outcome) {
+		const note = plan.outcomeNote ? ` — ${plan.outcomeNote}` : "";
+		console.log(`Outcome:  ${plan.outcome}${note}`);
+	}
+	if (!plan.reviewedBy) {
+		console.log(muted("Review suggested (no reviewer recorded yet)"));
+	} else {
+		console.log(`Reviewed: ${plan.reviewedBy}`);
+	}
+
+	console.log("");
+	renderPlanSections(plan);
+
+	console.log("");
+	console.log(brand(`Children (${tree.children.length}):`));
+	if (tree.children.length === 0) {
+		console.log(muted("  (none)"));
+	} else {
+		for (const c of tree.children) {
 			console.log(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}`);
 		}
+	}
+
+	for (const sub of tree.children_plans) {
+		console.log("");
+		renderNestedPlanHuman(sub, "  ");
 	}
 }
 

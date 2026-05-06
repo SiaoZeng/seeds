@@ -632,6 +632,168 @@ describe("sd plan show", () => {
 	});
 });
 
+describe("sd plan show: recursive nesting (Phase 4 / PLAN_SPEC.md:340, 425, 430)", () => {
+	async function setMaxDepth(n: number): Promise<void> {
+		const cfgPath = join(tmpDir, ".seeds", "config.yaml");
+		const text = await Bun.file(cfgPath).text();
+		const lines = text.split("\n").filter((l) => !l.startsWith("max_plan_depth:"));
+		await Bun.write(cfgPath, `${lines.join("\n").trimEnd()}\nmax_plan_depth: ${n}\n`);
+	}
+
+	function planWithSubPlanStep(): { template: string; sections: Record<string, unknown> } {
+		const base = validPlanFor();
+		base.sections.steps = [
+			{ title: "Sub-plan epic", type: "epic", priority: 1, plan_template: "feature" },
+			{ title: "Plain task", type: "task", priority: 2, blocks: [0] },
+		];
+		return base;
+	}
+
+	test("depth-1 plan with no nested children renders unchanged (regression)", async () => {
+		const seedId = await createSeed(tmpDir, "Solo");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+
+		const { stdout, exitCode } = await run(["plan", "show", planId, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as {
+			plan: { id: string };
+			children: Array<{ id: string }>;
+			children_plans: unknown[];
+		};
+		expect(parsed.plan.id).toBe(planId);
+		expect(parsed.children.length).toBe(4);
+		expect(parsed.children_plans).toEqual([]);
+	});
+
+	test("depth-2: nested plan appears in children_plans (JSON) and indented in human", async () => {
+		const seedId = await createSeed(tmpDir, "Root parent");
+		const rootPath = await writePlanFile(tmpDir, planWithSubPlanStep());
+		const rootSubmit = await run(["plan", "submit", seedId, "--plan", rootPath, "--json"], tmpDir);
+		const rootResult = JSON.parse(rootSubmit.stdout) as { plan_id: string; children: string[] };
+		const childWithSubPlan = rootResult.children[0];
+		expect(childWithSubPlan).toBeDefined();
+		if (!childWithSubPlan) return;
+
+		// Submit a sub-plan for the requires_plan child.
+		const subPath = await writePlanFile(tmpDir, validPlanFor());
+		const subSubmit = await run(
+			["plan", "submit", childWithSubPlan, "--plan", subPath, "--json"],
+			tmpDir,
+		);
+		const subPlanId = (JSON.parse(subSubmit.stdout) as { plan_id: string }).plan_id;
+
+		// JSON form: nested plan appears under children_plans.
+		const { stdout } = await run(["plan", "show", rootResult.plan_id, "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as {
+			plan: { id: string };
+			children_plans: Array<{ plan?: { id: string }; truncated?: boolean }>;
+		};
+		expect(parsed.children_plans.length).toBe(1);
+		const nested = parsed.children_plans[0];
+		expect(nested?.truncated).toBeFalsy();
+		expect(nested?.plan?.id).toBe(subPlanId);
+
+		// Human form: nested plan id appears with indentation.
+		const human = await run(["plan", "show", rootResult.plan_id], tmpDir);
+		expect(human.exitCode).toBe(0);
+		expect(human.stdout).toContain(subPlanId);
+		expect(human.stdout).toContain("Sub-plan:");
+	});
+
+	test("max_plan_depth: 1 truncates immediately with the documented hint", async () => {
+		await setMaxDepth(1);
+		const seedId = await createSeed(tmpDir, "Truncation root");
+		const rootPath = await writePlanFile(tmpDir, planWithSubPlanStep());
+		const rootSubmit = await run(["plan", "submit", seedId, "--plan", rootPath, "--json"], tmpDir);
+		const rootResult = JSON.parse(rootSubmit.stdout) as { plan_id: string; children: string[] };
+		const childWithSubPlan = rootResult.children[0];
+		if (!childWithSubPlan) throw new Error("missing first child");
+
+		const subPath = await writePlanFile(tmpDir, validPlanFor());
+		const subSubmit = await run(
+			["plan", "submit", childWithSubPlan, "--plan", subPath, "--json"],
+			tmpDir,
+		);
+		const subPlanId = (JSON.parse(subSubmit.stdout) as { plan_id: string }).plan_id;
+
+		// JSON: at depth 1 the nested entry is truncated.
+		const { stdout } = await run(["plan", "show", rootResult.plan_id, "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as {
+			children_plans: Array<{ plan_id?: string; truncated?: boolean; hint?: string }>;
+		};
+		expect(parsed.children_plans.length).toBe(1);
+		const truncated = parsed.children_plans[0];
+		expect(truncated?.truncated).toBe(true);
+		expect(truncated?.plan_id).toBe(subPlanId);
+		expect(truncated?.hint).toBe(
+			`depth limit reached — use \`sd plan show ${subPlanId}\` to drill in`,
+		);
+
+		// Human: hint string appears once.
+		const human = await run(["plan", "show", rootResult.plan_id], tmpDir);
+		const occurrences = human.stdout.split(`sd plan show ${subPlanId}`).length - 1;
+		expect(occurrences).toBe(1);
+		expect(human.stdout).toContain("depth limit reached");
+	});
+
+	test("max_plan_depth: 2 with depth-3 nesting truncates only the third level", async () => {
+		await setMaxDepth(2);
+		// Build A → B → C nesting using plan_template at each level.
+		const rootSeed = await createSeed(tmpDir, "Level 1 seed");
+		const rootPath = await writePlanFile(tmpDir, planWithSubPlanStep());
+		const rootSubmit = await run(
+			["plan", "submit", rootSeed, "--plan", rootPath, "--json"],
+			tmpDir,
+		);
+		const rootResult = JSON.parse(rootSubmit.stdout) as { plan_id: string; children: string[] };
+		const level2Seed = rootResult.children[0];
+		if (!level2Seed) throw new Error("level2 seed missing");
+
+		const level2Path = await writePlanFile(tmpDir, planWithSubPlanStep());
+		const level2Submit = await run(
+			["plan", "submit", level2Seed, "--plan", level2Path, "--json"],
+			tmpDir,
+		);
+		const level2Result = JSON.parse(level2Submit.stdout) as {
+			plan_id: string;
+			children: string[];
+		};
+		const level3Seed = level2Result.children[0];
+		if (!level3Seed) throw new Error("level3 seed missing");
+
+		const level3Path = await writePlanFile(tmpDir, validPlanFor());
+		const level3Submit = await run(
+			["plan", "submit", level3Seed, "--plan", level3Path, "--json"],
+			tmpDir,
+		);
+		const level3PlanId = (JSON.parse(level3Submit.stdout) as { plan_id: string }).plan_id;
+
+		const { stdout } = await run(["plan", "show", rootResult.plan_id, "--json"], tmpDir);
+		type Entry = {
+			plan?: { id: string };
+			children_plans?: Entry[];
+			truncated?: boolean;
+			hint?: string;
+			plan_id?: string;
+		};
+		const parsed = JSON.parse(stdout) as { children_plans: Entry[] };
+
+		// Level 2 fully rendered; level 3 truncated.
+		expect(parsed.children_plans.length).toBe(1);
+		const lvl2 = parsed.children_plans[0];
+		expect(lvl2?.truncated).toBeFalsy();
+		expect(lvl2?.plan?.id).toBe(level2Result.plan_id);
+		expect(lvl2?.children_plans?.length).toBe(1);
+		const lvl3 = lvl2?.children_plans?.[0];
+		expect(lvl3?.truncated).toBe(true);
+		expect(lvl3?.plan_id).toBe(level3PlanId);
+		expect(lvl3?.hint).toContain(level3PlanId);
+		expect(lvl3?.hint).toContain("depth limit reached");
+	});
+});
+
 describe("sd plan list", () => {
 	async function submitPlan(seedTitle: string): Promise<{ planId: string; seedId: string }> {
 		const seedId = await createSeed(tmpDir, seedTitle);
@@ -718,6 +880,101 @@ describe("sd plan list", () => {
 		const { stdout, exitCode } = await run(["plan", "list"], tmpDir);
 		expect(exitCode).toBe(0);
 		expect(stdout).toContain(planId);
+	});
+});
+
+describe("sd plan submit: step.plan_template (Phase 4 / PLAN_SPEC.md:329-342)", () => {
+	function planWithSubPlanStep(): { template: string; sections: Record<string, unknown> } {
+		const base = validPlanFor();
+		base.sections.steps = [
+			{ title: "OAuth integration", type: "epic", priority: 1, plan_template: "feature" },
+			{ title: "Wire UI", type: "task", priority: 2, blocks: [0] },
+		];
+		return base;
+	}
+
+	test("step with plan_template spawns child with requires_plan and no plan_id", async () => {
+		const seedId = await createSeed(tmpDir, "Parent with sub-plan step");
+		const planPath = await writePlanFile(tmpDir, planWithSubPlanStep());
+		const { stdout, exitCode } = await run(
+			["plan", "submit", seedId, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { plan_id: string; children: string[] };
+
+		const issues = await readJsonl<{
+			id: string;
+			plan_id?: string;
+			plan_step_index?: number;
+			requires_plan?: boolean;
+		}>(join(tmpDir, ".seeds", "issues.jsonl"));
+
+		const subPlanChild = issues.find((i) => i.id === result.children[0]);
+		const plainChild = issues.find((i) => i.id === result.children[1]);
+
+		expect(subPlanChild?.requires_plan).toBe(true);
+		expect(subPlanChild?.plan_id).toBeUndefined();
+		expect(subPlanChild?.plan_step_index).toBe(0);
+
+		// Sibling without plan_template is unchanged: plan_id back-link, no flag.
+		expect(plainChild?.requires_plan).toBeUndefined();
+		expect(plainChild?.plan_id).toBe(result.plan_id);
+	});
+
+	test("requires_plan child is hidden from sd ready (composes with Task 1)", async () => {
+		const seedId = await createSeed(tmpDir, "Parent");
+		const planPath = await writePlanFile(tmpDir, planWithSubPlanStep());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const childIds = (JSON.parse(submit.stdout) as { children: string[] }).children;
+		const subPlanChild = childIds[0];
+
+		const { stdout: readyJson } = await run(["ready", "--json"], tmpDir);
+		const ready = JSON.parse(readyJson) as { issues: Array<{ id: string }> };
+		expect(ready.issues.some((i) => i.id === subPlanChild)).toBe(false);
+	});
+
+	test("sd plan prompt on the spawned child inherits plan_template from parent step", async () => {
+		const seedId = await createSeed(tmpDir, "Parent");
+		const planPath = await writePlanFile(tmpDir, planWithSubPlanStep());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const childId = (JSON.parse(submit.stdout) as { children: string[] }).children[0];
+		expect(childId).toBeDefined();
+		if (!childId) return;
+
+		const { stdout, exitCode } = await run(["plan", "prompt", childId, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan_request: { template: string; seed: string } };
+		expect(parsed.plan_request.seed).toBe(childId);
+		expect(parsed.plan_request.template).toBe("feature");
+	});
+
+	test("unknown plan_template name fails submit with a clear stderr message", async () => {
+		const seedId = await createSeed(tmpDir, "Parent");
+		const bad = validPlanFor();
+		bad.sections.steps = [
+			{ title: "First step", type: "task", priority: 2 },
+			{
+				title: "Bad sub-plan ref",
+				type: "epic",
+				priority: 1,
+				plan_template: "nonexistent",
+			},
+		];
+		const planPath = await writePlanFile(tmpDir, bad);
+		const { stderr, stdout, exitCode } = await run(
+			["plan", "submit", seedId, "--plan", planPath],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stdout.trim()).toBe("");
+		expect(stderr).toContain("nonexistent");
+		expect(stderr).toContain("plan_templates");
+		expect(stderr).toContain("Bad sub-plan ref");
+
+		// No writes — plans.jsonl stays empty.
+		const planRows = await readJsonl<unknown>(join(tmpDir, ".seeds/plans.jsonl"));
+		expect(planRows.length).toBe(0);
 	});
 });
 

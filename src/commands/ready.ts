@@ -74,9 +74,18 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	let ready = issues.filter((i: Issue) => {
 		if (i.status !== "open") return false;
-		// Planning is the highest-priority work: surface seeds with a draft
-		// plan even if they would otherwise be blocked. (PLAN_SPEC.md:154)
-		if (isPlanDraftBlocking(planForIssue(planCtx, i))) return true;
+		// PLAN_SPEC.md:342 — seeds with requires_plan are excluded until their
+		// own sub-plan reaches `approved`. Lookup by seed-id since plan_id is
+		// not set on the spawned child until its sub-plan submit succeeds.
+		if (i.requires_plan === true) {
+			const sub = planCtx.plansBySeed.get(i.id);
+			if (!sub || sub.status === "draft") return false;
+			// approved/active/done: fall through to standard blocker check.
+		} else if (isPlanDraftBlocking(planForIssue(planCtx, i))) {
+			// Planning is the highest-priority work: surface seeds with a draft
+			// plan even if they would otherwise be blocked. (PLAN_SPEC.md:154)
+			return true;
+		}
 		const blockers = i.blockedBy ?? [];
 		return blockers.every((bid) => closedIds.has(bid));
 	});
