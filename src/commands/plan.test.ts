@@ -651,6 +651,172 @@ describe("sd plan show", () => {
 	});
 });
 
+describe("sd plan show: structured list rendering (seeds-7d17)", () => {
+	async function submitPlan(plan: unknown): Promise<string> {
+		const seedId = await createSeed(tmpDir, "Renderer parent", "feature");
+		const planPath = await writePlanFile(tmpDir, plan);
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		return (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+	}
+
+	test("steps render titles directly with annotated sub-lines", async () => {
+		const plan = {
+			template: "feature",
+			sections: {
+				context: VALID_CONTEXT,
+				approach: "Render structured steps in a human-readable way.",
+				alternatives: [],
+				steps: [
+					{ title: "Plain step", type: "task", priority: 2, blocks: [] },
+					{ title: "Blocked step", type: "task", priority: 2, blocks: [0] },
+					{
+						title: "Pre-planned step",
+						type: "task",
+						priority: 2,
+						blocks: [],
+						requires_plan: true,
+						plan_template: "feature",
+					},
+				],
+				risks: [],
+				acceptance: ["End-to-end works"],
+			},
+		};
+		const planId = await submitPlan(plan);
+		const { stdout, exitCode } = await run(["plan", "show", planId], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("1. Plain step");
+		expect(stdout).toContain("2. Blocked step");
+		expect(stdout).toContain("blocks: 1");
+		expect(stdout).toContain("3. Pre-planned step");
+		expect(stdout).toContain("requires_plan: true");
+		expect(stdout).toContain("plan_template: feature");
+		expect(stdout).not.toContain('{"title":"Plain step"');
+		expect(stdout).not.toContain('"requires_plan":true');
+	});
+
+	test("alternatives render named fields per item", async () => {
+		const plan = {
+			template: "feature",
+			sections: {
+				context: VALID_CONTEXT,
+				approach: "Render list-with-item-schema sections.",
+				alternatives: [
+					{ name: "Personal access tokens", rejected_because: "Plaintext storage" },
+					{ name: "Basic auth", rejected_because: "No revocation" },
+				],
+				steps: [
+					{ title: "Step one", type: "task", priority: 2, blocks: [] },
+					{ title: "Step two", type: "task", priority: 2, blocks: [] },
+				],
+				risks: [],
+				acceptance: ["Works"],
+			},
+		};
+		const planId = await submitPlan(plan);
+		const { stdout, exitCode } = await run(["plan", "show", planId], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("1. name: Personal access tokens");
+		expect(stdout).toContain("rejected_because: Plaintext storage");
+		expect(stdout).toContain("2. name: Basic auth");
+		expect(stdout).toContain("rejected_because: No revocation");
+		expect(stdout).not.toContain('{"name":"Personal access tokens"');
+	});
+
+	test("custom templates with declared item schemas render through the same path", async () => {
+		const cfgPath = join(tmpDir, ".seeds", "config.yaml");
+		const existing = await Bun.file(cfgPath).text();
+		const customBlock = [
+			"plan_templates:",
+			"  custom:",
+			"    sections:",
+			"      context:",
+			"        required: true",
+			"        kind: text",
+			"        prompt: why",
+			"      decisions:",
+			"        required: true",
+			"        kind: list",
+			"        prompt: choices",
+			"        item:",
+			"          choice:",
+			"            required: true",
+			"            kind: text",
+			"            prompt: ''",
+			"          rationale:",
+			"            required: true",
+			"            kind: text",
+			"            prompt: ''",
+			"      steps:",
+			"        required: true",
+			"        kind: steps",
+			"        min: 1",
+			"        prompt: do work",
+			"      acceptance:",
+			"        required: true",
+			"        kind: list",
+			"        item: text",
+			"        min: 1",
+			"        prompt: done",
+			"",
+		].join("\n");
+		await Bun.write(cfgPath, `${existing.trimEnd()}\n${customBlock}`);
+
+		const plan = {
+			template: "custom",
+			sections: {
+				context: "Custom-template context line that meets the prompt.",
+				decisions: [{ choice: "Build it", rationale: "Cheaper than buying" }],
+				steps: [{ title: "Lone step", type: "task", priority: 2, blocks: [] }],
+				acceptance: ["Done"],
+			},
+		};
+		const planId = await submitPlan(plan);
+		const { stdout, exitCode } = await run(["plan", "show", planId], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("1. choice: Build it");
+		expect(stdout).toContain("rationale: Cheaper than buying");
+		expect(stdout).toContain("1. Lone step");
+		expect(stdout).not.toContain('{"choice":"Build it"');
+	});
+
+	test("plans whose template is no longer registered fall back to JSON dump", async () => {
+		const plan = {
+			template: "feature",
+			sections: {
+				context: VALID_CONTEXT,
+				approach: "Verify graceful fallback.",
+				alternatives: [{ name: "Some alt", rejected_because: "Not picked" }],
+				steps: [
+					{ title: "Only step", type: "task", priority: 2, blocks: [] },
+					{ title: "Second step", type: "task", priority: 2, blocks: [] },
+				],
+				risks: [],
+				acceptance: ["Works"],
+			},
+		};
+		const planId = await submitPlan(plan);
+
+		const plansPath = join(tmpDir, ".seeds", "plans.jsonl");
+		const text = await Bun.file(plansPath).text();
+		const rewritten = text
+			.split("\n")
+			.filter((l) => l.trim())
+			.map((l) => {
+				const row = JSON.parse(l) as { id: string; template: string };
+				if (row.id === planId) row.template = "no-such-template";
+				return JSON.stringify(row);
+			})
+			.join("\n");
+		await Bun.write(plansPath, `${rewritten}\n`);
+
+		const { stdout, exitCode } = await run(["plan", "show", planId], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain('{"name":"Some alt"');
+		expect(stdout).toContain('{"title":"Only step"');
+	});
+});
+
 describe("sd plan show: recursive nesting (Phase 4 / PLAN_SPEC.md:340, 425, 430)", () => {
 	async function setMaxDepth(n: number): Promise<void> {
 		const cfgPath = join(tmpDir, ".seeds", "config.yaml");

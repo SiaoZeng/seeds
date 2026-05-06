@@ -830,7 +830,7 @@ function buildPlanTree(
 	return { plan, children: childrenSummary, children_plans: childrenPlans };
 }
 
-function renderPlanSections(plan: Plan): void {
+function renderPlanSections(plan: Plan, template: PlanTemplate | undefined): void {
 	console.log(brand("Sections:"));
 	const order = ["context", "approach", "alternatives", "steps", "risks", "acceptance"];
 	const knownKeys = new Set(order);
@@ -840,6 +840,7 @@ function renderPlanSections(plan: Plan): void {
 	];
 	for (const key of orderedKeys) {
 		const value = plan.sections[key];
+		const spec = template?.sections[key];
 		console.log(`  ${accent.bold(key)}`);
 		if (value === undefined || value === null) {
 			console.log(muted("    (empty)"));
@@ -854,17 +855,83 @@ function renderPlanSections(plan: Plan): void {
 				console.log(muted("    (none)"));
 				continue;
 			}
-			value.forEach((entry, i) => {
-				if (typeof entry === "string") {
-					console.log(`    ${i + 1}. ${entry}`);
-				} else {
-					console.log(`    ${i + 1}. ${JSON.stringify(entry)}`);
-				}
-			});
+			renderListSection(value, spec);
 			continue;
 		}
 		console.log(`    ${JSON.stringify(value)}`);
 	}
+}
+
+function renderListSection(entries: unknown[], spec: SectionSpec | undefined): void {
+	const kind = spec?.kind;
+	const itemSpec = spec?.item;
+	entries.forEach((entry, i) => {
+		const marker = `    ${i + 1}.`;
+		if (typeof entry === "string") {
+			console.log(`${marker} ${entry}`);
+			return;
+		}
+		if (kind === "steps" && isPlainRecord(entry)) {
+			renderStepEntry(marker, entry);
+			return;
+		}
+		if (kind === "list" && isPlainRecord(entry) && isItemSchema(itemSpec)) {
+			renderListEntry(marker, entry, itemSpec);
+			return;
+		}
+		console.log(`${marker} ${JSON.stringify(entry)}`);
+	});
+}
+
+function renderStepEntry(marker: string, entry: Record<string, unknown>): void {
+	const title = typeof entry.title === "string" ? entry.title : JSON.stringify(entry);
+	console.log(`${marker} ${title}`);
+	const subIndent = " ".repeat(marker.length + 1);
+	const blocks = entry.blocks;
+	if (Array.isArray(blocks) && blocks.length > 0) {
+		const labels = blocks
+			.map((b) => (typeof b === "number" ? String(b + 1) : JSON.stringify(b)))
+			.join(", ");
+		console.log(`${subIndent}${muted(`blocks: ${labels}`)}`);
+	}
+	if (entry.requires_plan === true) {
+		console.log(`${subIndent}${muted("requires_plan: true")}`);
+	}
+	if (typeof entry.plan_template === "string" && entry.plan_template.length > 0) {
+		console.log(`${subIndent}${muted(`plan_template: ${entry.plan_template}`)}`);
+	}
+}
+
+function renderListEntry(
+	marker: string,
+	entry: Record<string, unknown>,
+	itemSpec: Record<string, SectionSpec>,
+): void {
+	const subIndent = " ".repeat(marker.length + 1);
+	const fieldNames = Object.keys(itemSpec);
+	let firstLineWritten = false;
+	for (const field of fieldNames) {
+		const fv = entry[field];
+		if (fv === undefined || fv === null || fv === "") continue;
+		const rendered = typeof fv === "string" ? fv : JSON.stringify(fv);
+		if (!firstLineWritten) {
+			console.log(`${marker} ${field}: ${rendered}`);
+			firstLineWritten = true;
+		} else {
+			console.log(`${subIndent}${field}: ${rendered}`);
+		}
+	}
+	if (!firstLineWritten) {
+		console.log(`${marker} ${JSON.stringify(entry)}`);
+	}
+}
+
+function isPlainRecord(v: unknown): v is Record<string, unknown> {
+	return typeof v === "object" && v !== null && !Array.isArray(v);
+}
+
+function isItemSchema(item: SectionSpec["item"]): item is Record<string, SectionSpec> {
+	return typeof item === "object" && item !== null;
 }
 
 function renderNestedPlanHuman(entry: PlanTreeEntry, indent: string): void {
@@ -903,6 +970,8 @@ async function runShow(planId: string, jsonMode: boolean): Promise<void> {
 	const issues = await readIssues(dir);
 	const plansBySeed = buildPlansBySeed(plans);
 	const tree = buildPlanTree(plan, issues, plansBySeed, 1, maxDepth);
+	const templates = await loadPlanTemplates(dir);
+	const template = templates[plan.template];
 
 	if (jsonMode) {
 		outputJson({
@@ -935,7 +1004,7 @@ async function runShow(planId: string, jsonMode: boolean): Promise<void> {
 	}
 
 	console.log("");
-	renderPlanSections(plan);
+	renderPlanSections(plan, template);
 
 	console.log("");
 	console.log(brand(`Children (${tree.children.length}):`));
