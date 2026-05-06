@@ -268,7 +268,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			console.log(muted("  Issues:"));
 			for (const issue of convoyIssues) {
 				process.stdout.write("    ");
-				printIssueOneLine(issue);
+				printIssueOneLine(issue, closedIds);
 			}
 		}
 		return;

@@ -127,7 +127,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			for (const issue of ready) console.log(issue.id);
 			return;
 		case "compact":
-			for (const issue of ready) console.log(formatIssueOneLineCompact(issue));
+			for (const issue of ready) console.log(formatIssueOneLineCompact(issue, closedIds));
 			return;
 		case "plain":
 			if (ready.length === 0) {
@@ -136,7 +136,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			}
 			for (const issue of ready) {
 				const { plan } = annotate(issue);
-				console.log(stripAnsi(formatIssueOneLine(issue) + planLineSuffix(plan)));
+				console.log(stripAnsi(formatIssueOneLine(issue, closedIds) + planLineSuffix(plan)));
 			}
 			console.log(`\n${ready.length} ready issue(s)`);
 			return;
@@ -149,9 +149,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				const { plan } = annotate(issue);
 				const suffix = planLineSuffix(plan);
 				if (suffix) {
-					process.stdout.write(`${formatIssueOneLine(issue)}${suffix}\n`);
+					process.stdout.write(`${formatIssueOneLine(issue, closedIds)}${suffix}\n`);
 				} else {
-					printIssueOneLine(issue);
+					printIssueOneLine(issue, closedIds);
 				}
 			}
 			console.log(`\n${ready.length} ready issue(s)`);

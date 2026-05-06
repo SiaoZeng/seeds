@@ -88,7 +88,11 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const limit = Number.parseInt(limitStr, 10) || 50;
 
 	const dir = seedsDir ?? (await findSeedsDir());
-	let issues = await readIssues(dir);
+	const allIssues = await readIssues(dir);
+	const closedBlockerIds = new Set(
+		allIssues.filter((i: Issue) => i.status === "closed").map((i) => i.id),
+	);
+	let issues = allIssues;
 
 	if (statusFilter) {
 		issues = issues.filter((i: Issue) => i.status === statusFilter);
@@ -126,14 +130,15 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			for (const issue of issues) console.log(issue.id);
 			return;
 		case "compact":
-			for (const issue of issues) console.log(formatIssueOneLineCompact(issue));
+			for (const issue of issues) console.log(formatIssueOneLineCompact(issue, closedBlockerIds));
 			return;
 		case "plain":
 			if (issues.length === 0) {
 				console.log(`No issues match "${query}".`);
 				return;
 			}
-			for (const issue of issues) console.log(stripAnsi(formatIssueOneLine(issue)));
+			for (const issue of issues)
+				console.log(stripAnsi(formatIssueOneLine(issue, closedBlockerIds)));
 			console.log(`\n${issues.length} match(es)`);
 			return;
 		default:
@@ -141,7 +146,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				console.log(`No issues match "${query}".`);
 				return;
 			}
-			for (const issue of issues) printIssueOneLine(issue);
+			for (const issue of issues) printIssueOneLine(issue, closedBlockerIds);
 			console.log(`\n${issues.length} match(es)`);
 			return;
 	}

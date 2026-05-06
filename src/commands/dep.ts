@@ -22,6 +22,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 		const blockedBy = issue.blockedBy ?? [];
 		const blocks = issue.blocks ?? [];
+		const closedBlockerIds = new Set(issues.filter((i) => i.status === "closed").map((i) => i.id));
 
 		if (jsonMode) {
 			outputJson({ success: true, command: "dep list", issueId, blockedBy, blocks });
@@ -33,7 +34,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 					const b = issues.find((i) => i.id === bid);
 					if (b) {
 						process.stdout.write("    ");
-						printIssueOneLine(b);
+						printIssueOneLine(b, closedBlockerIds);
 					} else {
 						console.log(`    ${accent(bid)} ${muted("(not found)")}`);
 					}
@@ -45,7 +46,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 					const b = issues.find((i) => i.id === bid);
 					if (b) {
 						process.stdout.write("    ");
-						printIssueOneLine(b);
+						printIssueOneLine(b, closedBlockerIds);
 					} else {
 						console.log(`    ${accent(bid)} ${muted("(not found)")}`);
 					}

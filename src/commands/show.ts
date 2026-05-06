@@ -56,9 +56,13 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		case "ids":
 			console.log(issue.id);
 			return;
-		case "compact":
-			console.log(formatIssueOneLineCompact(issue));
+		case "compact": {
+			const closedBlockerIds = new Set(
+				issues.filter((i) => i.status === "closed").map((i) => i.id),
+			);
+			console.log(formatIssueOneLineCompact(issue, closedBlockerIds));
 			return;
+		}
 		case "plain":
 			console.log(stripAnsi(formatIssueFull(issue) + renderPlanBlock(plan, planChildren)));
 			return;

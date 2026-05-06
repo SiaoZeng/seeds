@@ -65,7 +65,11 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const limit = Number.parseInt(limitStr, 10) || 50;
 
 	const dir = seedsDir ?? (await findSeedsDir());
-	let issues = await readIssues(dir);
+	const allIssues = await readIssues(dir);
+	const closedBlockerIds = new Set(
+		allIssues.filter((i: Issue) => i.status === "closed").map((i) => i.id),
+	);
+	let issues = allIssues;
 	const planCtx = await loadPlanContext(dir);
 
 	if (statusFilter) {
@@ -105,7 +109,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			for (const issue of issues) console.log(issue.id);
 			return;
 		case "compact":
-			for (const issue of issues) console.log(formatIssueOneLineCompact(issue));
+			for (const issue of issues) console.log(formatIssueOneLineCompact(issue, closedBlockerIds));
 			return;
 		case "plain":
 			if (issues.length === 0) {
@@ -114,7 +118,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			}
 			for (const issue of issues) {
 				const plan = planForIssue(planCtx, issue);
-				console.log(stripAnsi(formatIssueOneLine(issue) + planLineSuffix(plan)));
+				console.log(stripAnsi(formatIssueOneLine(issue, closedBlockerIds) + planLineSuffix(plan)));
 			}
 			console.log(`\n${issues.length} issue(s)`);
 			return;
@@ -127,9 +131,9 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				const plan = planForIssue(planCtx, issue);
 				const suffix = planLineSuffix(plan);
 				if (suffix) {
-					process.stdout.write(`${formatIssueOneLine(issue)}${suffix}\n`);
+					process.stdout.write(`${formatIssueOneLine(issue, closedBlockerIds)}${suffix}\n`);
 				} else {
-					printIssueOneLine(issue);
+					printIssueOneLine(issue, closedBlockerIds);
 				}
 			}
 			console.log(`\n${issues.length} issue(s)`);
