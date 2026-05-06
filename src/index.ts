@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-export const VERSION = "0.4.0";
-
 import chalk from "chalk";
 import { Command, Help } from "commander";
 import { brand, muted, setQuiet } from "./output.ts";
+import { VERSION } from "./version.ts";
+
+export { VERSION };
 
 // Apply quiet mode early so it affects all output during command execution
 const rawArgs = process.argv.slice(2);

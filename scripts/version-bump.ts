@@ -45,24 +45,27 @@ if (newPkgText === pkgText) {
 }
 await Bun.write(pkgPath, newPkgText);
 
-// --- Update src/index.ts ---
-const indexPath = new URL("../src/index.ts", import.meta.url).pathname;
-const indexText = await Bun.file(indexPath).text();
-const newIndexText = indexText.replace(`const VERSION = "${current}"`, `const VERSION = "${next}"`);
-if (newIndexText === indexText) {
-	console.error(`Could not find 'const VERSION = "${current}"' in src/index.ts`);
+// --- Update src/version.ts ---
+const versionPath = new URL("../src/version.ts", import.meta.url).pathname;
+const versionText = await Bun.file(versionPath).text();
+const newVersionText = versionText.replace(
+	`export const VERSION = "${current}"`,
+	`export const VERSION = "${next}"`,
+);
+if (newVersionText === versionText) {
+	console.error(`Could not find 'export const VERSION = "${current}"' in src/version.ts`);
 	// Rollback package.json
 	await Bun.write(pkgPath, pkgText);
 	process.exit(1);
 }
-await Bun.write(indexPath, newIndexText);
+await Bun.write(versionPath, newVersionText);
 
 // --- Done ---
 console.log(`Bumped ${current} → ${next}`);
 console.log("");
 console.log("Next steps:");
 console.log(`  1. Update CHANGELOG.md — move [Unreleased] items to [${next}]`);
-console.log("  2. git add package.json src/index.ts CHANGELOG.md");
+console.log("  2. git add package.json src/version.ts CHANGELOG.md");
 console.log(`  3. git commit -m "chore: release v${next}"`);
 console.log(`  4. git tag v${next}`);
 console.log("  5. git push && git push --tags");

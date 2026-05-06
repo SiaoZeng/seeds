@@ -44,9 +44,9 @@ jobs:
         if: steps.version-check.outputs.publish == 'true'
         run: |
           PKG_VERSION="${{ steps.version-check.outputs.version }}"
-          SRC_VERSION=$(grep -oP 'const VERSION = "\K[^"]+' src/index.ts)
+          SRC_VERSION=$(grep -oP 'export const VERSION = "\K[^"]+' src/version.ts)
           if [ "$PKG_VERSION" != "$SRC_VERSION" ]; then
-            echo "::error::Version mismatch! package.json=$PKG_VERSION src/index.ts=$SRC_VERSION"
+            echo "::error::Version mismatch! package.json=$PKG_VERSION src/version.ts=$SRC_VERSION"
             exit 1
           fi
 

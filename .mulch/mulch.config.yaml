@@ -6,6 +6,7 @@ domains:
   commands: {}
   architecture: {}
   seeds: {}
+  onboard: {}
 governance:
   max_entries: 100
   warn_entries: 150
