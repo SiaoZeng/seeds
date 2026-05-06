@@ -56,6 +56,25 @@ export function register(program: Command): void {
 		)
 		.option("--domain <name>", "Force the mulch domain used for --record-decision")
 		.option("--json", "Output as JSON")
+		.addHelpText(
+			"after",
+			`
+Plan file shape:
+
+  {
+    "template": "feature",
+    "sections": {
+      "approach": "Plain-text approach...",
+      "steps": [{ "title": "Step 1" }, ...],
+      "acceptance": ["criterion 1", ...]
+    }
+  }
+
+The shape mirrors 'sd plan prompt': drop the plan_request wrapper, and
+sections is an object keyed by name (not the array of section metadata
+that the prompt emits). Section names and value kinds match the template.
+`,
+		)
 		.action(
 			async (
 				seedId: string,
@@ -188,7 +207,7 @@ interface PlanRequest {
 }
 
 const INSTRUCTIONS =
-	"Fill every section. Required fields are marked. Use prior_art entries to ground decisions.";
+	'Fill every section. Required fields are marked. Use prior_art entries to ground decisions. Reply with JSON shaped { "template": "<name>", "sections": { "<section-name>": <value>, ... } } — drop the plan_request wrapper, and sections in your reply is an object keyed by name (not the array of section metadata above).';
 
 function buildPlanRequest(
 	seedId: string,

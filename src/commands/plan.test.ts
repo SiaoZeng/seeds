@@ -43,6 +43,24 @@ describe("sd plan (parent)", () => {
 		const { exitCode } = await run(["plan"], tmpDir);
 		expect(exitCode).not.toBe(0);
 	});
+
+	test("submit --help documents the plan file shape", async () => {
+		const { stdout, exitCode } = await run(["plan", "submit", "--help"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("Plan file shape");
+		expect(stdout).toContain('"template"');
+		expect(stdout).toContain('"sections"');
+		expect(stdout).toContain("plan_request wrapper");
+	});
+
+	test("prompt instructions explain the submit shape", async () => {
+		const seedId = await createSeed(tmpDir, "Demo seed");
+		const { stdout, exitCode } = await run(["plan", "prompt", seedId, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan_request: { instructions: string } };
+		expect(parsed.plan_request.instructions).toContain("plan_request wrapper");
+		expect(parsed.plan_request.instructions).toContain("keyed by name");
+	});
 });
 
 async function createSeed(cwd: string, title: string, type = "task"): Promise<string> {
