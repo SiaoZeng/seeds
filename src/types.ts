@@ -53,6 +53,28 @@ export interface Config {
 	version: string;
 }
 
+// Plan template config — what `plan_templates:` in config.yaml resolves to.
+// Compiled into AJV schema by src/plan-schema.ts (Phase 2 task seeds-6bd8).
+export type SectionKindLiteral = "text" | "list" | "steps";
+
+export interface SectionSpec {
+	required: boolean;
+	kind: SectionKindLiteral | Record<string, SectionSpec>;
+	prompt: string;
+	min_length?: number;
+	min?: number;
+	item?: "text" | Record<string, SectionSpec>;
+	mulch_source?: string;
+}
+
+export interface PlanTemplate {
+	name: string;
+	description?: string;
+	sections: Record<string, SectionSpec>;
+}
+
+export const SECTION_KINDS: readonly SectionKindLiteral[] = ["text", "list", "steps"] as const;
+
 export interface ConvoyStatus {
 	templateId: string;
 	total: number;

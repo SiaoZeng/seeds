@@ -1,15 +1,9 @@
 import { Command } from "commander";
-import { findSeedsDir, readConfig } from "../config.ts";
+import { findSeedsDir, loadPlanTemplates, readConfig } from "../config.ts";
 import { generateId } from "../id.ts";
 import { accent, brand, muted, outputJson, printSuccess } from "../output.ts";
 import { summarisePlanChildren } from "../plan-context.ts";
-import {
-	defaultTemplateForType,
-	getTemplate,
-	listTemplates,
-	type PlanSection,
-	templateNames,
-} from "../plan-templates/index.ts";
+import { compilePlanTemplate, defaultTemplateForType } from "../plan-schema.ts";
 import {
 	appendPlan,
 	issuesPath,
@@ -20,7 +14,7 @@ import {
 	writeIssues,
 	writePlans,
 } from "../store.ts";
-import type { Issue, Plan } from "../types.ts";
+import type { Issue, Plan, PlanTemplate, SectionSpec } from "../types.ts";
 
 export function register(program: Command): void {
 	const plan = new Command("plan").description("Plan management");
@@ -46,9 +40,13 @@ export function register(program: Command): void {
 		.command("submit <seed-id>")
 		.description("Validate a plan, spawn children, write plans.jsonl row")
 		.requiredOption("--plan <file>", "Path to plan JSON, or '-' to read from stdin")
+		.option(
+			"--overwrite",
+			"Replace an existing non-draft plan: rewrite the row, bump revision, flag obsolete children",
+		)
 		.option("--json", "Output as JSON")
-		.action(async (seedId: string, opts: { plan: string; json?: boolean }) => {
-			await runSubmit(seedId, opts.plan, Boolean(opts.json));
+		.action(async (seedId: string, opts: { plan: string; overwrite?: boolean; json?: boolean }) => {
+			await runSubmit(seedId, opts.plan, Boolean(opts.overwrite), Boolean(opts.json));
 		});
 
 	plan
@@ -97,31 +95,38 @@ export function register(program: Command): void {
 }
 
 async function runTemplates(jsonMode: boolean): Promise<void> {
-	const templates = listTemplates();
+	const dir = await findSeedsDir();
+	const templates = await loadPlanTemplates(dir);
+	const list = Object.keys(templates).sort();
+	const entries = list.map((name) => ({
+		name,
+		description: templates[name]?.description ?? "",
+	}));
 	if (jsonMode) {
 		outputJson({
 			success: true,
 			command: "plan templates",
-			templates: templates.map((t) => ({ name: t.name, description: t.description })),
-			count: templates.length,
+			templates: entries,
+			count: entries.length,
 		});
 		return;
 	}
 	console.log(`${brand("Available templates:")}`);
-	for (const t of templates) {
-		console.log(`  ${accent.bold(t.name)}  ${muted(t.description)}`);
+	for (const t of entries) {
+		const desc = t.description ? `  ${muted(t.description)}` : "";
+		console.log(`  ${accent.bold(t.name)}${desc}`);
 	}
 }
 
 interface PromptSection {
 	name: string;
 	required: boolean;
-	kind: PlanSection["kind"];
+	kind: SectionSpec["kind"];
 	prompt: string;
 	prior_art: unknown[];
 	min_length?: number;
 	min?: number;
-	item?: PlanSection["item"];
+	item?: SectionSpec["item"];
 }
 
 interface PlanRequest {
@@ -139,15 +144,14 @@ interface PlanRequest {
 const INSTRUCTIONS =
 	"Fill every section. Required fields are marked. Use prior_art entries to ground decisions.";
 
-function buildPlanRequest(seedId: string, templateName: string): PlanRequest {
-	const template = getTemplate(templateName);
-	if (!template) {
-		const available = templateNames().join(", ");
-		throw new Error(`Unknown template: ${templateName}. Available: ${available}`);
-	}
-	const sections: PromptSection[] = template.sections.map((s) => {
+function buildPlanRequest(
+	seedId: string,
+	templateName: string,
+	template: PlanTemplate,
+): PlanRequest {
+	const sections: PromptSection[] = Object.entries(template.sections).map(([name, s]) => {
 		const out: PromptSection = {
-			name: s.name,
+			name,
 			required: s.required,
 			kind: s.kind,
 			prompt: s.prompt,
@@ -158,8 +162,8 @@ function buildPlanRequest(seedId: string, templateName: string): PlanRequest {
 		if (s.item !== undefined) out.item = s.item;
 		return out;
 	});
-	const stepsSection = template.sections.find((s) => s.name === "steps");
-	const acceptanceSection = template.sections.find((s) => s.name === "acceptance");
+	const stepsSection = template.sections.steps;
+	const acceptanceSection = template.sections.acceptance;
 	return {
 		seed: seedId,
 		template: templateName,
@@ -183,13 +187,15 @@ async function runPrompt(
 	const seed = issues.find((i) => i.id === seedId);
 	if (!seed) throw new Error(`Seed not found: ${seedId}`);
 
+	const templates = await loadPlanTemplates(dir);
 	const templateName = templateOverride ?? defaultTemplateForType(seed.type);
-	if (!getTemplate(templateName)) {
-		const available = templateNames().join(", ");
+	const template = templates[templateName];
+	if (!template) {
+		const available = Object.keys(templates).join(", ");
 		throw new Error(`Unknown template: ${templateName}. Available: ${available}`);
 	}
 
-	const planRequest = buildPlanRequest(seedId, templateName);
+	const planRequest = buildPlanRequest(seedId, templateName, template);
 
 	if (jsonMode) {
 		outputJson({ plan_request: planRequest });
@@ -204,7 +210,8 @@ async function runPrompt(
 	console.log("");
 	for (const s of planRequest.sections) {
 		const tag = s.required ? brand("required") : muted("optional");
-		console.log(`  ${accent.bold(s.name)} ${muted(`(${s.kind})`)} ${tag}`);
+		const kindLabel = typeof s.kind === "string" ? s.kind : "object";
+		console.log(`  ${accent.bold(s.name)} ${muted(`(${kindLabel})`)} ${tag}`);
 		console.log(`    ${muted(s.prompt)}`);
 		if (s.min_length !== undefined) console.log(`    ${muted(`min_length: ${s.min_length}`)}`);
 		if (s.min !== undefined) console.log(`    ${muted(`min entries: ${s.min}`)}`);
@@ -240,7 +247,12 @@ async function readPlanInput(planFile: string): Promise<string> {
 	return await file.text();
 }
 
-async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): Promise<void> {
+async function runSubmit(
+	seedId: string,
+	planFile: string,
+	overwrite: boolean,
+	jsonMode: boolean,
+): Promise<void> {
 	const dir = await findSeedsDir();
 
 	const raw = await readPlanInput(planFile);
@@ -257,13 +269,16 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 		typeof (parsed as { template?: unknown }).template === "string"
 			? (parsed as { template: string }).template
 			: "feature";
-	const template = getTemplate(templateName);
+
+	const templates = await loadPlanTemplates(dir);
+	const template = templates[templateName];
 	if (!template) {
-		const available = templateNames().join(", ");
+		const available = Object.keys(templates).join(", ");
 		throw new Error(`Unknown template in plan: ${templateName}. Available: ${available}`);
 	}
 
-	const result = template.validate(parsed);
+	const validate = compilePlanTemplate(template);
+	const result = validate(parsed);
 	if (!result.valid) {
 		// Partial-state diff JSON to stderr (PLAN_SPEC.md:180-195).
 		// stdout stays clean so callers can pipe it into a file.
@@ -277,6 +292,9 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 
 	let createdPlanId = "";
 	let childIds: string[] = [];
+	let revision = 1;
+	let obsoleteChildren: Issue[] = [];
+	let aborted = false;
 
 	// Combined lock: hold plans + issues while we read and write both.
 	// Order: outer lock = plans, inner = issues. Same across submit/validate
@@ -290,18 +308,44 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 			const seed = allIssues[seedIdx];
 			if (!seed) throw new Error(`Seed not found: ${seedId}`);
 
-			// Phase 1 rejects resubmission for any non-draft existing plan.
-			// `--overwrite` lands in Phase 2 (PLAN_SPEC.md:374-391).
 			const existingPlan = allPlans.find((p) => p.seed === seedId && p.status !== "draft");
-			if (existingPlan) {
-				throw new Error(
-					`Plan ${existingPlan.id} already exists for ${seedId} (status: ${existingPlan.status}, revision: ${existingPlan.revision}). Use --overwrite to replace it. (Phase 1: --overwrite is not yet implemented.)`,
+			if (existingPlan && !overwrite) {
+				// PLAN_SPEC.md:374-391 — reject without --overwrite, exit non-zero
+				// with a multi-line stderr message.
+				process.stderr.write(
+					`✗ plan ${existingPlan.id} already exists for ${seedId} (status: ${existingPlan.status}, revision: ${existingPlan.revision})\n  Use --overwrite to replace it.\n`,
 				);
+				process.exitCode = 1;
+				aborted = true;
+				return;
 			}
 
 			const steps = submitted.sections.steps;
+			const now = new Date().toISOString();
 
-			// Allocate ids up front so blocks-index translation has them all.
+			if (existingPlan && overwrite) {
+				const result = applyOverwrite({
+					existingPlan,
+					seed,
+					seedIdx,
+					allIssues,
+					allPlans,
+					steps,
+					projectName: config.project,
+					templateName,
+					newSections: submitted.sections as Record<string, unknown>,
+					now,
+				});
+				await writeIssues(dir, allIssues);
+				await writePlans(dir, allPlans);
+				createdPlanId = existingPlan.id;
+				childIds = result.finalChildIds;
+				revision = result.revision;
+				obsoleteChildren = result.obsolete;
+				return;
+			}
+
+			// Fresh-submit path (no existing non-draft plan).
 			const issueIds = new Set(allIssues.map((i) => i.id));
 			const planIds = new Set(allPlans.map((p) => p.id));
 			const planId = generateId("pl", planIds);
@@ -312,11 +356,6 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 				newChildIds.push(id);
 			}
 
-			const now = new Date().toISOString();
-
-			// Build child issues. step[i].blocks lists the indices step i depends
-			// on, so child[i].blockedBy = step[i].blocks ↦ child ids. The reverse
-			// `blocks` field is collected in a second pass.
 			const newIssues: Issue[] = steps.map((step, idx) => {
 				const childId = newChildIds[idx];
 				if (!childId) throw new Error(`Internal: missing child id at index ${idx}`);
@@ -344,7 +383,6 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 				return issue;
 			});
 
-			// Reverse edges: if step i depends on step j, then j blocks i.
 			for (let i = 0; i < steps.length; i++) {
 				const step = steps[i];
 				if (!step) continue;
@@ -357,8 +395,6 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 				}
 			}
 
-			// Parent seed gains a back-pointer to the plan and is blocked by all
-			// children (so `sd ready` surfaces children, not the parent).
 			const updatedSeed: Issue = {
 				...seed,
 				plan_id: planId,
@@ -367,7 +403,6 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 			};
 			allIssues[seedIdx] = updatedSeed;
 
-			// Each child blocks the parent.
 			for (const child of newIssues) {
 				child.blocks = [...(child.blocks ?? []), seedId];
 			}
@@ -384,8 +419,6 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 				updatedAt: now,
 			};
 
-			// Write issues atomically (rewrite parent + append children) and
-			// append the plan row.
 			await writeIssues(dir, [...allIssues, ...newIssues]);
 
 			const draftIdx = allPlans.findIndex((p) => p.seed === seedId && p.status === "draft");
@@ -401,6 +434,18 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 		});
 	});
 
+	if (aborted) return;
+
+	if (obsoleteChildren.length > 0) {
+		// PLAN_SPEC.md:388 — emit one suggestion line per obsolete child to
+		// stderr; never auto-close.
+		for (const o of obsoleteChildren) {
+			process.stderr.write(
+				`sd close ${o.id} --reason "obsoleted by plan ${createdPlanId} revision ${revision}"\n`,
+			);
+		}
+	}
+
 	if (jsonMode) {
 		outputJson({
 			success: true,
@@ -408,15 +453,164 @@ async function runSubmit(seedId: string, planFile: string, jsonMode: boolean): P
 			plan_id: createdPlanId,
 			children: childIds,
 			parent_seed: seedId,
+			revision,
+			obsolete: obsoleteChildren.map((o) => o.id),
+			overwritten: revision > 1,
 		});
 		return;
 	}
 
-	printSuccess(`plan ${accent(createdPlanId)} created (status: approved)`);
+	if (revision > 1) {
+		printSuccess(
+			`plan ${accent(createdPlanId)} overwritten (revision ${revision}, status: approved)`,
+		);
+	} else {
+		printSuccess(`plan ${accent(createdPlanId)} created (status: approved)`);
+	}
 	printSuccess(
-		`spawned ${childIds.length} child seeds: ${childIds.map((id) => accent(id)).join(", ")}`,
+		`${childIds.length} child seed${childIds.length === 1 ? "" : "s"}: ${childIds
+			.map((id) => accent(id))
+			.join(", ")}`,
 	);
+	if (obsoleteChildren.length > 0) {
+		printSuccess(
+			`${obsoleteChildren.length} obsolete child seed${
+				obsoleteChildren.length === 1 ? "" : "s"
+			} flagged (see stderr for close suggestions)`,
+		);
+	}
 	printSuccess(`${accent(seedId)} now blocked by ${childIds.length} children`);
+}
+
+interface OverwriteArgs {
+	existingPlan: Plan;
+	seed: Issue;
+	seedIdx: number;
+	allIssues: Issue[];
+	allPlans: Plan[];
+	steps: SubmittedStep[];
+	projectName: string;
+	templateName: string;
+	newSections: Record<string, unknown>;
+	now: string;
+}
+
+interface OverwriteResult {
+	finalChildIds: string[];
+	revision: number;
+	obsolete: Issue[];
+}
+
+// applyOverwrite mutates allIssues + allPlans in place. The caller is expected
+// to have already acquired the plans + issues locks.
+function applyOverwrite(args: OverwriteArgs): OverwriteResult {
+	const {
+		existingPlan,
+		seed,
+		seedIdx,
+		allIssues,
+		allPlans,
+		steps,
+		projectName,
+		templateName,
+		newSections,
+		now,
+	} = args;
+
+	// Match existing children to new steps by title (PLAN_SPEC.md:387-388).
+	const oldChildIssues: Issue[] = [];
+	for (const cid of existingPlan.children) {
+		const c = allIssues.find((i) => i.id === cid);
+		if (c) oldChildIssues.push(c);
+	}
+	const usedOldIds = new Set<string>();
+	const finalChildIds: string[] = [];
+	const newSpawnedIds: string[] = [];
+	const issueIds = new Set(allIssues.map((i) => i.id));
+
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		if (!step) continue;
+		const match = oldChildIssues.find((c) => !usedOldIds.has(c.id) && c.title === step.title);
+		if (match) {
+			usedOldIds.add(match.id);
+			finalChildIds.push(match.id);
+		} else {
+			const taken = new Set([...issueIds, ...newSpawnedIds, ...finalChildIds]);
+			const id = generateId(projectName, taken);
+			newSpawnedIds.push(id);
+			finalChildIds.push(id);
+		}
+	}
+
+	// Build issues for newly spawned children only. Existing matched children
+	// are kept verbatim (PLAN_SPEC.md:389: "Existing matching children are kept").
+	const newIssues: Issue[] = [];
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		if (!step) continue;
+		const childId = finalChildIds[i];
+		if (!childId) continue;
+		if (usedOldIds.has(childId)) continue; // matched — leave untouched
+		const stepType = (step.type ?? "task") as Issue["type"];
+		const issue: Issue = {
+			id: childId,
+			title: step.title,
+			status: "open",
+			type: stepType,
+			priority: step.priority ?? 2,
+			plan_id: existingPlan.id,
+			plan_step_index: i,
+			createdAt: now,
+			updatedAt: now,
+		};
+		const deps = step.blocks ?? [];
+		const blockedByIds: string[] = [];
+		for (const j of deps) {
+			const target = finalChildIds[j];
+			if (target) blockedByIds.push(target);
+		}
+		if (blockedByIds.length > 0) issue.blockedBy = blockedByIds;
+		issue.blocks = [seed.id];
+		newIssues.push(issue);
+	}
+
+	// Obsolete children = old plan children with no matching step in new plan.
+	const obsolete: Issue[] = oldChildIssues.filter((c) => !usedOldIds.has(c.id));
+
+	// Parent seed: drop obsolete from blockedBy, ensure all current plan children
+	// are present. Preserve unrelated blockers.
+	const oldChildSet = new Set(existingPlan.children);
+	const externalBlockers = (seed.blockedBy ?? []).filter((b) => !oldChildSet.has(b));
+	const updatedSeed: Issue = {
+		...seed,
+		plan_id: existingPlan.id,
+		blockedBy: [...externalBlockers, ...finalChildIds],
+		updatedAt: now,
+	};
+	allIssues[seedIdx] = updatedSeed;
+
+	// Update the plan row in place — single mutation per overwrite.
+	const planIdx = allPlans.findIndex((p) => p.id === existingPlan.id);
+	const updatedPlan: Plan = {
+		...existingPlan,
+		template: templateName,
+		sections: newSections,
+		children: finalChildIds,
+		revision: existingPlan.revision + 1,
+		updatedAt: now,
+	};
+	if (planIdx >= 0) allPlans[planIdx] = updatedPlan;
+
+	const allIssuesWithNew = [...allIssues, ...newIssues];
+	// allIssues is mutated; replace its contents to reflect appended new children
+	// so the caller's writeIssues snapshot is consistent.
+	allIssues.length = 0;
+	allIssues.push(...allIssuesWithNew);
+
+	// Caller already holds locks; do the persistence here so the row mutation
+	// of plans.jsonl shows up as a single replaced line in git diff.
+	return { finalChildIds, revision: updatedPlan.revision, obsolete };
 }
 
 async function runShow(planId: string, jsonMode: boolean): Promise<void> {
@@ -556,9 +750,10 @@ async function runValidate(planId: string, jsonMode: boolean): Promise<void> {
 	if (!plan) {
 		throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
 	}
-	const template = getTemplate(plan.template);
+	const templates = await loadPlanTemplates(dir);
+	const template = templates[plan.template];
 	if (!template) {
-		const available = templateNames().join(", ");
+		const available = Object.keys(templates).join(", ");
 		throw new Error(
 			`Plan ${planId} references unknown template '${plan.template}'. Available: ${available}.`,
 		);
@@ -566,8 +761,9 @@ async function runValidate(planId: string, jsonMode: boolean): Promise<void> {
 
 	// Re-run the same validator submit uses so the partial-state diff shape stays
 	// in sync (PLAN_SPEC.md:148-149 + 180-195).
+	const validate = compilePlanTemplate(template);
 	const subject = { template: plan.template, sections: plan.sections };
-	const result = template.validate(subject);
+	const result = validate(subject);
 
 	if (result.valid) {
 		if (jsonMode) {

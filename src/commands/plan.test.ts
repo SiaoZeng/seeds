@@ -341,6 +341,247 @@ describe("sd plan submit", () => {
 	});
 });
 
+describe("sd plan submit --overwrite", () => {
+	async function readIssue(id: string): Promise<{
+		id: string;
+		title: string;
+		status: string;
+		blockedBy?: string[];
+	}> {
+		const issues = await readJsonl<{
+			id: string;
+			title: string;
+			status: string;
+			blockedBy?: string[];
+		}>(join(tmpDir, ".seeds/issues.jsonl"));
+		const found = issues.find((i) => i.id === id);
+		if (!found) throw new Error(`issue not found: ${id}`);
+		return found;
+	}
+
+	async function readPlanRow(planId: string): Promise<{
+		id: string;
+		revision: number;
+		children: string[];
+		sections: Record<string, unknown>;
+	}> {
+		const plans = await readJsonl<{
+			id: string;
+			revision: number;
+			children: string[];
+			sections: Record<string, unknown>;
+		}>(join(tmpDir, ".seeds/plans.jsonl"));
+		const found = plans.find((p) => p.id === planId);
+		if (!found) throw new Error(`plan not found: ${planId}`);
+		return found;
+	}
+
+	test("rejects re-submit without --overwrite (exit 1, expected stderr format)", async () => {
+		const seedId = await createSeed(tmpDir, "Re-plan target");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+
+		const second = await run(["plan", "submit", seedId, "--plan", planPath], tmpDir);
+		expect(second.exitCode).not.toBe(0);
+		expect(second.stderr).toMatch(/already exists for /);
+		expect(second.stderr).toMatch(/Use --overwrite to replace it/);
+	});
+
+	test("--overwrite rewrites the plan row in place and bumps revision", async () => {
+		const seedId = await createSeed(tmpDir, "Re-plan target");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstParsed = JSON.parse(first.stdout) as { plan_id: string; children: string[] };
+		const planId = firstParsed.plan_id;
+
+		const v2 = validPlanFor();
+		const planPath2 = await writePlanFile(tmpDir, v2);
+		const overwriteResult = await run(
+			["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"],
+			tmpDir,
+		);
+		expect(overwriteResult.exitCode).toBe(0);
+		const parsed = JSON.parse(overwriteResult.stdout) as {
+			plan_id: string;
+			revision: number;
+			overwritten: boolean;
+			children: string[];
+			obsolete: string[];
+		};
+		expect(parsed.plan_id).toBe(planId);
+		expect(parsed.revision).toBe(2);
+		expect(parsed.overwritten).toBe(true);
+
+		// One row in plans.jsonl, revision=2.
+		const plans = await readJsonl<{ id: string; revision: number }>(
+			join(tmpDir, ".seeds/plans.jsonl"),
+		);
+		expect(plans.filter((p) => p.id === planId).length).toBe(1);
+		expect(plans.find((p) => p.id === planId)?.revision).toBe(2);
+	});
+
+	test("revision increments on each overwrite (1 → 2 → 3)", async () => {
+		const seedId = await createSeed(tmpDir, "Multi-rev");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(first.stdout) as { plan_id: string }).plan_id;
+
+		await run(["plan", "submit", seedId, "--plan", planPath, "--overwrite", "--json"], tmpDir);
+		await run(["plan", "submit", seedId, "--plan", planPath, "--overwrite", "--json"], tmpDir);
+
+		const row = await readPlanRow(planId);
+		expect(row.revision).toBe(3);
+	});
+
+	test("matched steps keep the same child IDs across overwrites", async () => {
+		const seedId = await createSeed(tmpDir, "Stable IDs");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstChildren = (JSON.parse(first.stdout) as { children: string[] }).children;
+
+		const overwriteResult = await run(
+			["plan", "submit", seedId, "--plan", planPath, "--overwrite", "--json"],
+			tmpDir,
+		);
+		const secondChildren = (JSON.parse(overwriteResult.stdout) as { children: string[] }).children;
+		expect(secondChildren).toEqual(firstChildren);
+	});
+
+	test("obsolete children are listed on stderr and not auto-closed", async () => {
+		const seedId = await createSeed(tmpDir, "With obsolete");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstResult = JSON.parse(first.stdout) as {
+			plan_id: string;
+			children: string[];
+		};
+
+		// Drop the last two steps in the new plan
+		const v2 = validPlanFor();
+		v2.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [] },
+			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
+		];
+		const planPath2 = await writePlanFile(tmpDir, v2);
+		const overwriteResult = await run(
+			["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"],
+			tmpDir,
+		);
+		expect(overwriteResult.exitCode).toBe(0);
+		const parsed = JSON.parse(overwriteResult.stdout) as {
+			plan_id: string;
+			children: string[];
+			obsolete: string[];
+		};
+
+		const obsoleteIds = firstResult.children.slice(2);
+		expect(parsed.obsolete.sort()).toEqual([...obsoleteIds].sort());
+
+		// Stderr suggestion lines
+		for (const id of obsoleteIds) {
+			expect(overwriteResult.stderr).toContain(
+				`sd close ${id} --reason "obsoleted by plan ${firstResult.plan_id} revision 2"`,
+			);
+		}
+
+		// Obsolete children stay open
+		for (const id of obsoleteIds) {
+			const issue = await readIssue(id);
+			expect(issue.status).toBe("open");
+		}
+	});
+
+	test("new steps spawn fresh children with proper blockedBy and plan_id", async () => {
+		const seedId = await createSeed(tmpDir, "Spawn new");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstResult = JSON.parse(first.stdout) as { plan_id: string; children: string[] };
+
+		const v2 = validPlanFor();
+		v2.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [] },
+			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
+			{ title: "Brand New Step", type: "task", priority: 2, blocks: [1] },
+		];
+		const planPath2 = await writePlanFile(tmpDir, v2);
+		const overwriteResult = await run(
+			["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"],
+			tmpDir,
+		);
+		const parsed = JSON.parse(overwriteResult.stdout) as {
+			plan_id: string;
+			children: string[];
+		};
+
+		// First two children preserved, third is newly spawned
+		expect(parsed.children[0]).toBe(firstResult.children[0]);
+		expect(parsed.children[1]).toBe(firstResult.children[1]);
+		const newChildId = parsed.children[2];
+		expect(newChildId).toBeDefined();
+		if (!newChildId) return;
+		expect(firstResult.children).not.toContain(newChildId);
+
+		const newIssue = await readJsonl<{
+			id: string;
+			title: string;
+			plan_id?: string;
+			blockedBy?: string[];
+		}>(join(tmpDir, ".seeds/issues.jsonl"));
+		const spawned = newIssue.find((i) => i.id === newChildId);
+		expect(spawned?.title).toBe("Brand New Step");
+		expect(spawned?.plan_id).toBe(firstResult.plan_id);
+		expect(spawned?.blockedBy).toEqual([firstResult.children[1] ?? ""]);
+	});
+
+	test("parent.blockedBy drops obsolete children and reflects the new plan", async () => {
+		const seedId = await createSeed(tmpDir, "Parent blockers");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const firstChildren = (JSON.parse(first.stdout) as { children: string[] }).children;
+
+		// New plan keeps Step A & Step B (matched by title), drops C and D.
+		const v2 = validPlanFor();
+		v2.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [] },
+			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
+		];
+		const planPath2 = await writePlanFile(tmpDir, v2);
+		const overwriteResult = await run(
+			["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"],
+			tmpDir,
+		);
+		const parsed = JSON.parse(overwriteResult.stdout) as { children: string[] };
+
+		const parent = await readIssue(seedId);
+		expect(parent.blockedBy).toEqual(parsed.children);
+		// Confirm we actually dropped the old C and D.
+		expect(parent.blockedBy).not.toContain(firstChildren[2] ?? "");
+		expect(parent.blockedBy).not.toContain(firstChildren[3] ?? "");
+	});
+
+	test("validation failure on overwrite leaves the prior plan untouched", async () => {
+		const seedId = await createSeed(tmpDir, "No clobber");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(first.stdout) as { plan_id: string }).plan_id;
+		const beforeRow = await readPlanRow(planId);
+
+		const v2 = validPlanFor();
+		// Force validation failure: only 1 step (min 2)
+		v2.sections.steps = [{ title: "only one", type: "task", priority: 2, blocks: [] }];
+		const badPath = await writePlanFile(tmpDir, v2);
+		const overwriteResult = await run(
+			["plan", "submit", seedId, "--plan", badPath, "--overwrite"],
+			tmpDir,
+		);
+		expect(overwriteResult.exitCode).not.toBe(0);
+
+		const afterRow = await readPlanRow(planId);
+		expect(afterRow.revision).toBe(beforeRow.revision);
+		expect(afterRow.children).toEqual(beforeRow.children);
+	});
+});
+
 describe("sd plan show", () => {
 	test("--json emits plan + child summaries", async () => {
 		const seedId = await createSeed(tmpDir, "Parent");

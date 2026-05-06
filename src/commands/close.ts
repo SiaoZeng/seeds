@@ -1,7 +1,16 @@
 import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
 import { outputJson, printSuccess } from "../output.ts";
-import { issuesPath, readIssues, withLock, writeIssues } from "../store.ts";
+import { affectedPlanIds, applyPlanTransitions } from "../plan-lifecycle.ts";
+import {
+	issuesPath,
+	plansPath,
+	readIssues,
+	readPlans,
+	withLock,
+	writeIssues,
+	writePlans,
+} from "../store.ts";
 import type { Issue } from "../types.ts";
 
 function parseArgs(args: string[]) {
@@ -50,40 +59,51 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const dir = seedsDir ?? (await findSeedsDir());
 	const closed: string[] = [];
 
-	await withLock(issuesPath(dir), async () => {
-		const issues = await readIssues(dir);
-		const now = new Date().toISOString();
+	// Lock order matches plan-submit: plans (outer) → issues (inner) so plan
+	// lifecycle transitions stay atomic with the close write.
+	await withLock(plansPath(dir), () =>
+		withLock(issuesPath(dir), async () => {
+			const issues = await readIssues(dir);
+			const now = new Date().toISOString();
 
-		for (const id of ids) {
-			const idx = issues.findIndex((i) => i.id === id);
-			const issue = issues[idx];
-			if (!issue) throw new Error(`Issue not found: ${id}`);
-			const updated: Issue = {
-				...issue,
-				status: "closed",
-				closedAt: now,
-				updatedAt: now,
-				...(reason ? { closeReason: reason } : {}),
-			};
-			issues[idx] = updated;
-			closed.push(id);
-
-			// Clean up blockedBy on issues this one blocks
-			const blockedIssueIds = issue.blocks ?? [];
-			for (const blockedId of blockedIssueIds) {
-				const blockedIdx = issues.findIndex((i) => i.id === blockedId);
-				const blockedIssue = issues[blockedIdx];
-				if (!blockedIssue) continue;
-				const remaining = (blockedIssue.blockedBy ?? []).filter((bid) => bid !== id);
-				issues[blockedIdx] = {
-					...blockedIssue,
-					blockedBy: remaining.length > 0 ? remaining : undefined,
+			for (const id of ids) {
+				const idx = issues.findIndex((i) => i.id === id);
+				const issue = issues[idx];
+				if (!issue) throw new Error(`Issue not found: ${id}`);
+				const updated: Issue = {
+					...issue,
+					status: "closed",
+					closedAt: now,
 					updatedAt: now,
+					...(reason ? { closeReason: reason } : {}),
 				};
+				issues[idx] = updated;
+				closed.push(id);
+
+				// Clean up blockedBy on issues this one blocks
+				const blockedIssueIds = issue.blocks ?? [];
+				for (const blockedId of blockedIssueIds) {
+					const blockedIdx = issues.findIndex((i) => i.id === blockedId);
+					const blockedIssue = issues[blockedIdx];
+					if (!blockedIssue) continue;
+					const remaining = (blockedIssue.blockedBy ?? []).filter((bid) => bid !== id);
+					issues[blockedIdx] = {
+						...blockedIssue,
+						blockedBy: remaining.length > 0 ? remaining : undefined,
+						updatedAt: now,
+					};
+				}
 			}
-		}
-		await writeIssues(dir, issues);
-	});
+			await writeIssues(dir, issues);
+
+			const plans = await readPlans(dir);
+			const affected = affectedPlanIds(plans, ids);
+			if (affected.length > 0) {
+				const changedCount = applyPlanTransitions(plans, issues, affected, now);
+				if (changedCount > 0) await writePlans(dir, plans);
+			}
+		}),
+	);
 
 	if (jsonMode) {
 		outputJson({ success: true, command: "close", closed });

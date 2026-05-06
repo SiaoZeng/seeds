@@ -1,7 +1,16 @@
 import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
 import { outputJson, printSuccess } from "../output.ts";
-import { issuesPath, readIssues, withLock, writeIssues } from "../store.ts";
+import { affectedPlanIds, applyPlanTransitions } from "../plan-lifecycle.ts";
+import {
+	issuesPath,
+	plansPath,
+	readIssues,
+	readPlans,
+	withLock,
+	writeIssues,
+	writePlans,
+} from "../store.ts";
 import type { Issue } from "../types.ts";
 import { VALID_STATUSES, VALID_TYPES } from "../types.ts";
 
@@ -52,7 +61,8 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const dir = seedsDir ?? (await findSeedsDir());
 	let updated: Issue | undefined;
 
-	await withLock(issuesPath(dir), async () => {
+	const statusChanging = typeof flags.status === "string";
+	const inner = async () => {
 		const issues = await readIssues(dir);
 		const idx = issues.findIndex((i) => i.id === id);
 		const issue = issues[idx];
@@ -120,7 +130,24 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		issues[idx] = { ...issue, ...patch };
 		updated = issues[idx];
 		await writeIssues(dir, issues);
-	});
+
+		// Plan lifecycle: if a child seed's status changed, recompute owning plan(s).
+		if (statusChanging && patch.status !== undefined && patch.status !== issue.status) {
+			const plans = await readPlans(dir);
+			const affected = affectedPlanIds(plans, [id]);
+			if (affected.length > 0) {
+				const changedCount = applyPlanTransitions(plans, issues, affected, now);
+				if (changedCount > 0) await writePlans(dir, plans);
+			}
+		}
+	};
+
+	if (statusChanging) {
+		// Lock order matches plan-submit: plans (outer) → issues (inner).
+		await withLock(plansPath(dir), () => withLock(issuesPath(dir), inner));
+	} else {
+		await withLock(issuesPath(dir), inner);
+	}
 
 	if (jsonMode) {
 		outputJson({ success: true, command: "update", issue: updated });
