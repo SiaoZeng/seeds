@@ -132,7 +132,7 @@ describe("sd onboard", () => {
 		expect(exitCode).toBe(0);
 		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
 		expect(content).toContain("# Project");
-		expect(content).toContain("seeds-onboard-v:2");
+		expect(content).toContain("seeds-onboard-v:3");
 		expect(content).not.toContain("seeds-onboard-v:0");
 		expect(content).not.toContain("Old Seeds Section");
 	});
@@ -150,17 +150,28 @@ describe("sd onboard", () => {
 		await initSeeds(tmpDir);
 		await run(["onboard"], tmpDir);
 		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
-		expect(content).toContain("seeds-onboard-v:2");
+		expect(content).toContain("seeds-onboard-v:3");
 	});
 
-	test("includes Planning section with sd plan workflow (Phase 5)", async () => {
+	test("includes Planning section with full sd plan surface", async () => {
 		await initSeeds(tmpDir);
 		await run(["onboard"], tmpDir);
 		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
 		expect(content).toContain("### Planning");
+		expect(content).toContain("sd plan templates");
 		expect(content).toContain("sd plan prompt");
 		expect(content).toContain("sd plan submit");
-		expect(content).toContain("Built-in templates");
+		expect(content).toContain("sd plan show");
+		expect(content).toContain("sd plan outcome");
+		expect(content).toContain("sd plan review");
+	});
+
+	test("includes sd search and --format flag in quick reference", async () => {
+		await initSeeds(tmpDir);
+		await run(["onboard"], tmpDir);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(content).toContain("sd search");
+		expect(content).toContain("--format");
 	});
 
 	test("re-running onboard does not duplicate the Planning section", async () => {

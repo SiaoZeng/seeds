@@ -5,7 +5,7 @@ import { findSeedsDir, projectRootFromSeedsDir } from "../config.ts";
 import { hasMarkerSection, replaceMarkerSection, wrapInMarkers } from "../markers.ts";
 import { outputJson, printSuccess } from "../output.ts";
 
-const ONBOARD_VERSION = 2;
+const ONBOARD_VERSION = 3;
 const VERSION_MARKER = `<!-- seeds-onboard-v:${String(ONBOARD_VERSION)} -->`;
 
 const CANDIDATE_FILES = ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"] as const;
@@ -21,10 +21,11 @@ This project uses [Seeds](https://github.com/jayminwest/seeds) for git-native is
 sd prime
 \`\`\`
 
-This injects session context: rules, command reference, and workflows.
+This injects session context: rules, command reference, and workflows. Pass \`--format json|compact|markdown|plain|ids\` on any command for agent-friendly output.
 
 **Quick reference:**
 - \`sd ready\` — Find unblocked work
+- \`sd search <query>\` — Full-text search across titles + descriptions
 - \`sd create --title "..." --type task --priority 2\` — Create issue
 - \`sd update <id> --status in_progress\` — Claim work
 - \`sd close <id>\` — Complete work
@@ -32,12 +33,14 @@ This injects session context: rules, command reference, and workflows.
 - \`sd sync\` — Sync with git (run before pushing)
 
 ### Planning
-Use \`sd plan prompt <seed>\` when work is large or ambiguous enough that an LLM benefits from structured decomposition. Submit spawns one child seed per step.
+Use \`sd plan\` when work is large or ambiguous enough that an LLM benefits from structured decomposition. Submit spawns one child seed per step and wires \`step.blocks\` into \`blockedBy\` dependencies.
 
+- \`sd plan templates\` — List built-ins (\`feature\`, \`bug\`, \`refactor\`) plus custom templates
 - \`sd plan prompt <seed-id>\` — Emit a structured prompt the LLM fills in
 - \`sd plan submit <seed-id> --plan <file>\` — Validate + spawn child seeds
 - \`sd plan show <pl-id>\` — View sections, children, sub-plans
-- Built-in templates: \`feature\` (default), \`bug\` (auto for type=bug), \`refactor\` (opt-in via \`--template\`)
+- \`sd plan outcome <pl-id> --result success|partial|failure\` — Record outcome (storage-only)
+- \`sd plan review <pl-id> --by <name>\` — Record reviewer (informational)
 
 ### Before You Finish
 1. Close completed issues: \`sd close <id>\`
