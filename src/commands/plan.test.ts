@@ -1967,3 +1967,169 @@ describe("sd show on plan-spawned seeds", () => {
 		expect(stdout).toContain(`Children (${children.length}):`);
 	});
 });
+
+describe("sd plan {show,validate,outcome,review}: accept seed id (seeds-51bc)", () => {
+	async function setup(): Promise<{
+		seedWithPlan: string;
+		planId: string;
+		seedNoPlan: string;
+	}> {
+		const seedWithPlan = await createSeed(tmpDir, "Has plan");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(
+			["plan", "submit", seedWithPlan, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		const planId = (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+		const seedNoPlan = await createSeed(tmpDir, "No plan");
+		return { seedWithPlan, planId, seedNoPlan };
+	}
+
+	test("show: pl-id works (regression)", async () => {
+		const { planId } = await setup();
+		const { stdout, exitCode } = await run(["plan", "show", planId, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan: { id: string } };
+		expect(parsed.plan.id).toBe(planId);
+	});
+
+	test("show: seed-id resolves through seed.plan_id", async () => {
+		const { seedWithPlan, planId } = await setup();
+		const { stdout, exitCode } = await run(["plan", "show", seedWithPlan, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan: { id: string; seed: string } };
+		expect(parsed.plan.id).toBe(planId);
+		expect(parsed.plan.seed).toBe(seedWithPlan);
+	});
+
+	test("show: seed without a plan errors with submit hint", async () => {
+		const { seedNoPlan } = await setup();
+		const { stderr, exitCode } = await run(["plan", "show", seedNoPlan], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain(`Seed ${seedNoPlan} has no plan`);
+		expect(stderr).toContain(`sd plan submit ${seedNoPlan}`);
+	});
+
+	test("show: unknown id errors cleanly", async () => {
+		const { stderr, exitCode } = await run(["plan", "show", "nope-9999"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr.toLowerCase()).toContain("not found");
+	});
+
+	test("validate: pl-id works (regression)", async () => {
+		const { planId } = await setup();
+		const { stdout, exitCode } = await run(["plan", "validate", planId, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { valid: boolean; plan_id: string };
+		expect(parsed.valid).toBe(true);
+		expect(parsed.plan_id).toBe(planId);
+	});
+
+	test("validate: seed-id resolves through seed.plan_id", async () => {
+		const { seedWithPlan, planId } = await setup();
+		const { stdout, exitCode } = await run(["plan", "validate", seedWithPlan, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { valid: boolean; plan_id: string };
+		expect(parsed.valid).toBe(true);
+		expect(parsed.plan_id).toBe(planId);
+	});
+
+	test("validate: seed without a plan errors with submit hint", async () => {
+		const { seedNoPlan } = await setup();
+		const { stderr, exitCode } = await run(["plan", "validate", seedNoPlan], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain(`Seed ${seedNoPlan} has no plan`);
+		expect(stderr).toContain(`sd plan submit ${seedNoPlan}`);
+	});
+
+	test("validate: unknown id errors cleanly", async () => {
+		const { stderr, exitCode } = await run(["plan", "validate", "nope-9999"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr.toLowerCase()).toContain("not found");
+	});
+
+	test("outcome: pl-id works (regression)", async () => {
+		const { planId } = await setup();
+		const { stdout, exitCode } = await run(
+			["plan", "outcome", planId, "--result", "success", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan_id: string; outcome: string };
+		expect(parsed.plan_id).toBe(planId);
+		expect(parsed.outcome).toBe("success");
+	});
+
+	test("outcome: seed-id resolves through seed.plan_id", async () => {
+		const { seedWithPlan, planId } = await setup();
+		const { stdout, exitCode } = await run(
+			["plan", "outcome", seedWithPlan, "--result", "success", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan_id: string; outcome: string };
+		expect(parsed.plan_id).toBe(planId);
+		expect(parsed.outcome).toBe("success");
+	});
+
+	test("outcome: seed without a plan errors with submit hint", async () => {
+		const { seedNoPlan } = await setup();
+		const { stderr, exitCode } = await run(
+			["plan", "outcome", seedNoPlan, "--result", "success"],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain(`Seed ${seedNoPlan} has no plan`);
+		expect(stderr).toContain(`sd plan submit ${seedNoPlan}`);
+	});
+
+	test("outcome: unknown id errors cleanly", async () => {
+		const { stderr, exitCode } = await run(
+			["plan", "outcome", "nope-9999", "--result", "success"],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stderr.toLowerCase()).toContain("not found");
+	});
+
+	test("review: pl-id works (regression)", async () => {
+		const { planId } = await setup();
+		const { stdout, exitCode } = await run(
+			["plan", "review", planId, "--by", "alice", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan_id: string; reviewedBy: string };
+		expect(parsed.plan_id).toBe(planId);
+		expect(parsed.reviewedBy).toBe("alice");
+	});
+
+	test("review: seed-id resolves through seed.plan_id", async () => {
+		const { seedWithPlan, planId } = await setup();
+		const { stdout, exitCode } = await run(
+			["plan", "review", seedWithPlan, "--by", "alice", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan_id: string; reviewedBy: string };
+		expect(parsed.plan_id).toBe(planId);
+		expect(parsed.reviewedBy).toBe("alice");
+	});
+
+	test("review: seed without a plan errors with submit hint", async () => {
+		const { seedNoPlan } = await setup();
+		const { stderr, exitCode } = await run(["plan", "review", seedNoPlan, "--by", "alice"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain(`Seed ${seedNoPlan} has no plan`);
+		expect(stderr).toContain(`sd plan submit ${seedNoPlan}`);
+	});
+
+	test("review: unknown id errors cleanly", async () => {
+		const { stderr, exitCode } = await run(
+			["plan", "review", "nope-9999", "--by", "alice"],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stderr.toLowerCase()).toContain("not found");
+	});
+});

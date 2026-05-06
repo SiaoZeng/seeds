@@ -97,38 +97,44 @@ that the prompt emits). Section names and value kinds match the template.
 		);
 
 	plan
-		.command("show <pl-id>")
-		.description("Show a plan with sections, children, and status")
+		.command("show <id>")
+		.description("Show a plan with sections, children, and status (accepts plan id or seed id)")
 		.option("--json", "Output as JSON")
-		.action(async (planId: string, opts: { json?: boolean }) => {
-			await runShow(planId, Boolean(opts.json));
+		.action(async (id: string, opts: { json?: boolean }) => {
+			await runShow(id, Boolean(opts.json));
 		});
 
 	plan
-		.command("validate <pl-id>")
-		.description("Re-run validation against the current template definition")
+		.command("validate <id>")
+		.description(
+			"Re-run validation against the current template definition (accepts plan id or seed id)",
+		)
 		.option("--json", "Output as JSON")
-		.action(async (planId: string, opts: { json?: boolean }) => {
-			await runValidate(planId, Boolean(opts.json));
+		.action(async (id: string, opts: { json?: boolean }) => {
+			await runValidate(id, Boolean(opts.json));
 		});
 
 	plan
-		.command("outcome <pl-id>")
-		.description("Record a plan outcome (storage-only; not a state transition)")
+		.command("outcome <id>")
+		.description(
+			"Record a plan outcome (storage-only; not a state transition; accepts plan id or seed id)",
+		)
 		.requiredOption("--result <value>", "One of: success, partial, failure")
 		.option("--note <text>", "Optional free-form note")
 		.option("--json", "Output as JSON")
-		.action(async (planId: string, opts: { result: string; note?: string; json?: boolean }) => {
-			await runOutcome(planId, opts.result, opts.note, Boolean(opts.json));
+		.action(async (id: string, opts: { result: string; note?: string; json?: boolean }) => {
+			await runOutcome(id, opts.result, opts.note, Boolean(opts.json));
 		});
 
 	plan
-		.command("review <pl-id>")
-		.description("Record a reviewer (informational; not a state transition)")
+		.command("review <id>")
+		.description(
+			"Record a reviewer (informational; not a state transition; accepts plan id or seed id)",
+		)
 		.requiredOption("--by <name>", "Reviewer name")
 		.option("--json", "Output as JSON")
-		.action(async (planId: string, opts: { by: string; json?: boolean }) => {
-			await runReview(planId, opts.by, Boolean(opts.json));
+		.action(async (id: string, opts: { by: string; json?: boolean }) => {
+			await runReview(id, opts.by, Boolean(opts.json));
 		});
 
 	plan
@@ -1029,8 +1035,29 @@ function renderNestedPlanHuman(entry: PlanTreeEntry, indent: string): void {
 	}
 }
 
-async function runShow(planId: string, jsonMode: boolean): Promise<void> {
+// Accept either a plan id (pl-xxxx) or a seed id; seeds resolve through
+// seed.plan_id (PLAN_SPEC contract: "the seed knows its plan"). The shared
+// helper keeps show/validate/outcome/review consistent so an agent that has a
+// seed id in hand never has to round-trip through `sd plan list` for the
+// pl-xxxx token.
+async function resolvePlanIdArg(arg: string, dir: string): Promise<string> {
+	if (arg.startsWith("pl-")) return arg;
+	const issues = await readIssues(dir);
+	const seed = issues.find((i) => i.id === arg);
+	if (!seed) {
+		throw new Error(`Plan not found: ${arg}. Run 'sd plan list' to see available plans.`);
+	}
+	if (!seed.plan_id) {
+		throw new Error(
+			`Seed ${arg} has no plan. Submit one with 'sd plan submit ${arg} --plan <file>'.`,
+		);
+	}
+	return seed.plan_id;
+}
+
+async function runShow(idArg: string, jsonMode: boolean): Promise<void> {
 	const dir = await findSeedsDir();
+	const planId = await resolvePlanIdArg(idArg, dir);
 	const config = await readConfig(dir);
 	const maxDepth = maxPlanDepth(config);
 	const plans = await readPlans(dir);
@@ -1149,7 +1176,7 @@ async function runList(filters: ListFilters, jsonMode: boolean): Promise<void> {
 const VALID_OUTCOMES = new Set(["success", "partial", "failure"]);
 
 async function runOutcome(
-	planId: string,
+	idArg: string,
 	result: string,
 	note: string | undefined,
 	jsonMode: boolean,
@@ -1158,6 +1185,7 @@ async function runOutcome(
 		throw new Error(`--result must be one of: ${[...VALID_OUTCOMES].join(", ")} (got: ${result})`);
 	}
 	const dir = await findSeedsDir();
+	const planId = await resolvePlanIdArg(idArg, dir);
 	let updatedPlan: Plan | null = null;
 	let openChildren = 0;
 	await withLock(plansPath(dir), async () => {
@@ -1210,8 +1238,9 @@ async function runOutcome(
 	printSuccess(`plan ${accent(finalPlan.id)} outcome recorded: ${finalPlan.outcome}${noteSuffix}`);
 }
 
-async function runReview(planId: string, by: string, jsonMode: boolean): Promise<void> {
+async function runReview(idArg: string, by: string, jsonMode: boolean): Promise<void> {
 	const dir = await findSeedsDir();
+	const planId = await resolvePlanIdArg(idArg, dir);
 	let updatedPlan: Plan | null = null;
 	await withLock(plansPath(dir), async () => {
 		const plans = await readPlans(dir);
@@ -1241,8 +1270,9 @@ async function runReview(planId: string, by: string, jsonMode: boolean): Promise
 	printSuccess(`plan ${accent(finalPlan.id)} reviewed by ${finalPlan.reviewedBy}`);
 }
 
-async function runValidate(planId: string, jsonMode: boolean): Promise<void> {
+async function runValidate(idArg: string, jsonMode: boolean): Promise<void> {
 	const dir = await findSeedsDir();
+	const planId = await resolvePlanIdArg(idArg, dir);
 	const plans = await readPlans(dir);
 	const plan = plans.find((p) => p.id === planId);
 	if (!plan) {
