@@ -1,8 +1,11 @@
+import { dirname } from "node:path";
 import { Command } from "commander";
 import { findSeedsDir, loadPlanTemplates, readConfig } from "../config.ts";
 import { generateId } from "../id.ts";
 import { accent, brand, muted, outputJson, printSuccess } from "../output.ts";
 import { summarisePlanChildren } from "../plan-context.ts";
+import { inferDomain } from "../plan-domain.ts";
+import { enrichPriorArt, recordDecision } from "../plan-mulch.ts";
 import { compilePlanTemplate, defaultTemplateForType } from "../plan-schema.ts";
 import {
 	appendPlan,
@@ -31,10 +34,13 @@ export function register(program: Command): void {
 		.command("prompt <seed-id>")
 		.description("Emit structured planning prompt JSON for a seed")
 		.option("--template <name>", "Override the inferred template")
+		.option("--domain <name>", "Force the mulch domain used for prior_art enrichment")
 		.option("--json", "Output as JSON")
-		.action(async (seedId: string, opts: { template?: string; json?: boolean }) => {
-			await runPrompt(seedId, opts.template, Boolean(opts.json));
-		});
+		.action(
+			async (seedId: string, opts: { template?: string; domain?: string; json?: boolean }) => {
+				await runPrompt(seedId, opts.template, opts.domain, Boolean(opts.json));
+			},
+		);
 
 	plan
 		.command("submit <seed-id>")
@@ -44,10 +50,31 @@ export function register(program: Command): void {
 			"--overwrite",
 			"Replace an existing non-draft plan: rewrite the row, bump revision, flag obsolete children",
 		)
+		.option(
+			"--record-decision",
+			"Best-effort: after success, record the chosen approach as a mulch decision",
+		)
+		.option("--domain <name>", "Force the mulch domain used for --record-decision")
 		.option("--json", "Output as JSON")
-		.action(async (seedId: string, opts: { plan: string; overwrite?: boolean; json?: boolean }) => {
-			await runSubmit(seedId, opts.plan, Boolean(opts.overwrite), Boolean(opts.json));
-		});
+		.action(
+			async (
+				seedId: string,
+				opts: {
+					plan: string;
+					overwrite?: boolean;
+					recordDecision?: boolean;
+					domain?: string;
+					json?: boolean;
+				},
+			) => {
+				await runSubmit(seedId, opts.plan, {
+					overwrite: Boolean(opts.overwrite),
+					recordDecision: Boolean(opts.recordDecision),
+					domainOverride: opts.domain,
+					jsonMode: Boolean(opts.json),
+				});
+			},
+		);
 
 	plan
 		.command("show <pl-id>")
@@ -180,6 +207,7 @@ function buildPlanRequest(
 async function runPrompt(
 	seedId: string,
 	templateOverride: string | undefined,
+	domainOverride: string | undefined,
 	jsonMode: boolean,
 ): Promise<void> {
 	const dir = await findSeedsDir();
@@ -196,6 +224,19 @@ async function runPrompt(
 	}
 
 	const planRequest = buildPlanRequest(seedId, templateName, template);
+
+	// Phase 3: prior_art enrichment via mulch. Soft coupling — empty arrays
+	// when ml is absent or a domain cannot be inferred.
+	const { domain } = inferDomain({ seed, explicitDomain: domainOverride });
+	const sectionRequests = Object.entries(template.sections).map(([name, spec]) => ({
+		name,
+		mulchSource: spec.mulch_source,
+	}));
+	const priorArt = enrichPriorArt({ domain, sections: sectionRequests });
+	for (const section of planRequest.sections) {
+		const entries = priorArt[section.name];
+		if (entries && entries.length > 0) section.prior_art = entries;
+	}
 
 	if (jsonMode) {
 		outputJson({ plan_request: planRequest });
@@ -247,12 +288,15 @@ async function readPlanInput(planFile: string): Promise<string> {
 	return await file.text();
 }
 
-async function runSubmit(
-	seedId: string,
-	planFile: string,
-	overwrite: boolean,
-	jsonMode: boolean,
-): Promise<void> {
+interface SubmitOptions {
+	overwrite: boolean;
+	recordDecision: boolean;
+	domainOverride?: string;
+	jsonMode: boolean;
+}
+
+async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions): Promise<void> {
+	const { overwrite, recordDecision: shouldRecordDecision, domainOverride, jsonMode } = opts;
 	const dir = await findSeedsDir();
 
 	const raw = await readPlanInput(planFile);
@@ -295,6 +339,9 @@ async function runSubmit(
 	let revision = 1;
 	let obsoleteChildren: Issue[] = [];
 	let aborted = false;
+	// Captured inside the lock so the post-success outbound mulch write has
+	// access without re-reading issues.jsonl.
+	let seedSnapshot: Issue | null = null;
 
 	// Combined lock: hold plans + issues while we read and write both.
 	// Order: outer lock = plans, inner = issues. Same across submit/validate
@@ -307,6 +354,7 @@ async function runSubmit(
 			const seedIdx = allIssues.findIndex((i) => i.id === seedId);
 			const seed = allIssues[seedIdx];
 			if (!seed) throw new Error(`Seed not found: ${seedId}`);
+			seedSnapshot = seed;
 
 			const existingPlan = allPlans.find((p) => p.seed === seedId && p.status !== "draft");
 			if (existingPlan && !overwrite) {
@@ -435,6 +483,19 @@ async function runSubmit(
 	});
 
 	if (aborted) return;
+
+	if (shouldRecordDecision && seedSnapshot) {
+		// PLAN_SPEC.md:354-356 — best-effort outbound write. Submit has already
+		// succeeded by this point; any failure here warns on stderr and leaves
+		// the plan + children intact.
+		await runOutboundDecision({
+			seed: seedSnapshot,
+			planId: createdPlanId,
+			approach: submitted.sections.approach,
+			domainOverride,
+			cwd: dir,
+		});
+	}
 
 	if (obsoleteChildren.length > 0) {
 		// PLAN_SPEC.md:388 — emit one suggestion line per obsolete child to
@@ -776,4 +837,43 @@ async function runValidate(planId: string, jsonMode: boolean): Promise<void> {
 
 	process.stderr.write(`${JSON.stringify(result.diff, null, 2)}\n`);
 	process.exitCode = 1;
+}
+
+interface OutboundDecisionArgs {
+	seed: Issue;
+	planId: string;
+	approach: unknown;
+	domainOverride?: string;
+	cwd: string;
+}
+
+async function runOutboundDecision(args: OutboundDecisionArgs): Promise<void> {
+	const projectRoot = dirname(args.cwd);
+	// Check ml availability first so the stderr warning distinguishes
+	// "ml not installed" from "no domain matched" — the spec mandates the
+	// former phrasing for the absent-ml branch (PLAN_SPEC.md:354-356).
+	if (!Bun.which("ml", { PATH: process.env.PATH })) {
+		process.stderr.write("⚠ --record-decision: ml not found on PATH; skipping\n");
+		return;
+	}
+	const { domain } = inferDomain({
+		seed: args.seed,
+		explicitDomain: args.domainOverride,
+		cwd: projectRoot,
+	});
+	if (!domain) {
+		process.stderr.write("⚠ --record-decision: no mulch domain inferred (skipping)\n");
+		return;
+	}
+	const approach = typeof args.approach === "string" ? args.approach : "";
+	const result = recordDecision({
+		domain,
+		planId: args.planId,
+		title: args.seed.title,
+		approach,
+		cwd: projectRoot,
+	});
+	if (!result.ok) {
+		process.stderr.write(`⚠ --record-decision: ${result.reason ?? "failed"}\n`);
+	}
 }
