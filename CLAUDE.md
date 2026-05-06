@@ -316,7 +316,7 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 
 <!-- mulch:start -->
 ## Project Expertise (Mulch)
-<!-- mulch-onboard-v:3 -->
+<!-- mulch-onboard-v:4 -->
 
 This project uses [Mulch](https://github.com/jayminwest/mulch) for structured expertise management.
 
@@ -350,6 +350,11 @@ Run `ml status` for domain health, `ml doctor` to check record integrity (add `-
 broken file anchors), `ml --help` for the full command list. Write commands use file locking and
 atomic writes, so multiple agents can record concurrently. Expertise survives `git worktree`
 cleanup — `.mulch/` resolves to the main repo.
+
+`ml prune` soft-archives stale records to `.mulch/archive/` instead of deleting them; pass
+`--hard` for true deletion. Restore an archived record with `ml restore <id>`. Do not read
+`.mulch/archive/` directly — those records are stale by definition. If you need historical
+context, run `ml search --archived <query>`.
 
 ### Before You Finish
 
