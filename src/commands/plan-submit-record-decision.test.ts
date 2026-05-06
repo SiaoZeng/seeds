@@ -43,7 +43,11 @@ async function runSd(
 	return { stdout, stderr, exitCode };
 }
 
-async function writeFakeMl(opts: { recordExit?: number; statusJson?: unknown }): Promise<void> {
+async function writeFakeMl(opts: {
+	recordExit?: number;
+	statusJson?: unknown;
+	recordJson?: unknown;
+}): Promise<void> {
 	const recordExit = opts.recordExit ?? 0;
 	// Default ml status response: declares one domain "commands" so domain
 	// inference can match a label-bearing seed.
@@ -56,6 +60,10 @@ async function writeFakeMl(opts: { recordExit?: number; statusJson?: unknown }):
 				}
 			: opts.statusJson;
 	const statusJsonStr = JSON.stringify(statusJson);
+	// recordJson stub: when set, the fake emits this on `record` so the parent
+	// process can parse a mulch id from stdout. Default empty mirrors older
+	// mulch CLIs that didn't accept --json on record.
+	const recordJsonStr = opts.recordJson === undefined ? "" : JSON.stringify(opts.recordJson);
 	const body = `#!/usr/bin/env bun
 const fs = require("node:fs");
 const argv = process.argv.slice(2);
@@ -66,6 +74,9 @@ if (isStatus) {
 	process.exit(0);
 }
 if (argv[0] === "record") {
+	if (${JSON.stringify(recordJsonStr)}.length > 0) {
+		process.stdout.write(${JSON.stringify(recordJsonStr)});
+	}
 	process.exit(${recordExit});
 }
 process.exit(0);
@@ -148,6 +159,44 @@ describe("sd plan submit --record-decision", () => {
 		expect(args[idx("--evidence-seeds") + 1]).toBe(out.plan_id);
 		// --title must be present (mulch requires it for decision records).
 		expect(idx("--title")).toBeGreaterThanOrEqual(0);
+		// --json is appended so we can parse the recorded mulch id from stdout.
+		expect(idx("--json")).toBeGreaterThanOrEqual(0);
+	});
+
+	test("success with parseable mulch id surfaces the id on stdout (human mode)", async () => {
+		await writeFakeMl({
+			recordJson: { success: true, command: "record", record: { id: "mx-abc123" } },
+		});
+		const seedId = await createSeedWithLabel(tmpDir, "Add SSO", "commands");
+		const planPath = await writePlan(tmpDir, validPlan("SSO via SAML"));
+
+		const res = await runSd(
+			["plan", "submit", seedId, "--plan", planPath, "--record-decision"],
+			tmpDir,
+		);
+		expect(res.exitCode).toBe(0);
+		expect(res.stdout).toContain("recorded mulch decision");
+		expect(res.stdout).toContain("mx-abc123");
+		// No warning on the success path.
+		expect(res.stderr).not.toContain("⚠ --record-decision");
+	});
+
+	test("--json suppresses the human mulch confirmation line on stdout", async () => {
+		await writeFakeMl({
+			recordJson: { success: true, command: "record", record: { id: "mx-deadbe" } },
+		});
+		const seedId = await createSeedWithLabel(tmpDir, "JSON SSO", "commands");
+		const planPath = await writePlan(tmpDir, validPlan("SSO via SAML"));
+
+		const res = await runSd(
+			["plan", "submit", seedId, "--plan", planPath, "--record-decision", "--json"],
+			tmpDir,
+		);
+		expect(res.exitCode).toBe(0);
+		// JSON consumers must get parseable JSON only — no human lines.
+		const parsed = JSON.parse(res.stdout) as { success: boolean };
+		expect(parsed.success).toBe(true);
+		expect(res.stdout).not.toContain("recorded mulch decision");
 	});
 
 	test("ml record exits non-zero -> submit succeeds, plan written, stderr warns", async () => {

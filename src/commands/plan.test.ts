@@ -358,6 +358,46 @@ describe("sd plan submit", () => {
 		expect(exitCode).not.toBe(0);
 		expect(stderr.toLowerCase()).toContain("not found");
 	});
+
+	test("success path emits Next-block hints to stderr (not stdout)", async () => {
+		const seedId = await createSeed(tmpDir, "Next-block parent");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const { stdout, stderr, exitCode } = await run(
+			["plan", "submit", seedId, "--plan", planPath],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		// stderr carries the hint block; the plan id and the three suggested
+		// commands are all present.
+		const planIdMatch = stdout.match(/plan (pl-[a-f0-9]+) created/);
+		expect(planIdMatch).not.toBeNull();
+		const planId = planIdMatch?.[1] ?? "";
+		expect(stderr).toContain("Next:");
+		expect(stderr).toContain(`sd plan show ${planId}`);
+		expect(stderr).toContain("sd ready");
+		expect(stderr).toContain(`sd plan review ${planId} --by`);
+		// stdout must not contain the hints — those are stderr-only.
+		expect(stdout).not.toContain("Next:");
+		expect(stdout).not.toContain("sd ready");
+	});
+
+	test("--json submit leaves stdout JSON intact and still emits Next on stderr", async () => {
+		const seedId = await createSeed(tmpDir, "JSON parent");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const { stdout, stderr, exitCode } = await run(
+			["plan", "submit", seedId, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		// stdout is parseable JSON and unchanged by the Next-hint rollout.
+		const parsed = JSON.parse(stdout) as { success: boolean; plan_id: string };
+		expect(parsed.success).toBe(true);
+		expect(stdout).not.toContain("Next:");
+		// stderr stays clean for --json mode (no Next block, no mulch line) so
+		// pipelines don't pick up surprise content. The Next block is a
+		// human-output affordance, not a JSON one.
+		expect(stderr).not.toContain("Next:");
+	});
 });
 
 describe("sd plan submit --overwrite", () => {

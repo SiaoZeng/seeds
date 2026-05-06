@@ -18,7 +18,7 @@ import {
 	writeIssues,
 	writePlans,
 } from "../store.ts";
-import type { Issue, Plan, PlanTemplate, SectionSpec } from "../types.ts";
+import type { Issue, Plan, PlanStatus, PlanTemplate, SectionSpec } from "../types.ts";
 
 export function register(program: Command): void {
 	const plan = new Command("plan").description("Plan management");
@@ -431,6 +431,11 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 	// Captured inside the lock so the post-success outbound mulch write has
 	// access without re-reading issues.jsonl.
 	let seedSnapshot: Issue | null = null;
+	// Captured inside the lock so the post-success Next-block can decide
+	// whether to suggest `sd plan review` (only when no reviewer yet and the
+	// plan is in a reviewable state).
+	let planStatus: PlanStatus = "approved";
+	let planReviewedBy: string | undefined;
 
 	// Combined lock: hold plans + issues while we read and write both.
 	// Order: outer lock = plans, inner = issues. Same across submit/validate
@@ -479,6 +484,9 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				childIds = result.finalChildIds;
 				revision = result.revision;
 				obsoleteChildren = result.obsolete;
+				// Overwrite preserves status + reviewer from the prior plan row.
+				planStatus = existingPlan.status;
+				planReviewedBy = existingPlan.reviewedBy;
 				return;
 			}
 
@@ -590,11 +598,12 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 
 	if (aborted) return;
 
+	let recordedMulchId: string | null = null;
 	if (shouldRecordDecision && seedSnapshot) {
 		// PLAN_SPEC.md:354-356 — best-effort outbound write. Submit has already
 		// succeeded by this point; any failure here warns on stderr and leaves
 		// the plan + children intact.
-		await runOutboundDecision({
+		recordedMulchId = await runOutboundDecision({
 			seed: seedSnapshot,
 			planId: createdPlanId,
 			approach: submitted.sections.approach,
@@ -647,6 +656,30 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 		);
 	}
 	printSuccess(`${accent(seedId)} now blocked by ${childIds.length} children`);
+	if (recordedMulchId) {
+		printSuccess(`recorded mulch decision ${accent(recordedMulchId)}`);
+	}
+	writeNextHints({
+		planId: createdPlanId,
+		reviewable: !planReviewedBy && (planStatus === "approved" || planStatus === "active"),
+	});
+}
+
+// Next-block hints follow the convention used by the obsolete-children
+// suggestions: stderr only, so JSON consumers (stdout) stay clean. The review
+// hint is conditional — once a reviewer is on the plan, suggesting
+// `sd plan review` again is just noise.
+function writeNextHints(opts: { planId: string; reviewable: boolean }): void {
+	const lines: string[] = [
+		"",
+		"Next:",
+		`  sd plan show ${opts.planId}          # review the plan as a unit`,
+		"  sd ready                      # pick up the first child step",
+	];
+	if (opts.reviewable) {
+		lines.push(`  sd plan review ${opts.planId} --by <name>   # record approval (optional)`);
+	}
+	process.stderr.write(`${lines.join("\n")}\n`);
 }
 
 interface OverwriteArgs {
@@ -1251,14 +1284,14 @@ interface OutboundDecisionArgs {
 	cwd: string;
 }
 
-async function runOutboundDecision(args: OutboundDecisionArgs): Promise<void> {
+async function runOutboundDecision(args: OutboundDecisionArgs): Promise<string | null> {
 	const projectRoot = dirname(args.cwd);
 	// Check ml availability first so the stderr warning distinguishes
 	// "ml not installed" from "no domain matched" — the spec mandates the
 	// former phrasing for the absent-ml branch (PLAN_SPEC.md:354-356).
 	if (!Bun.which("ml", { PATH: process.env.PATH })) {
 		process.stderr.write("⚠ --record-decision: ml not found on PATH; skipping\n");
-		return;
+		return null;
 	}
 	const { domain } = inferDomain({
 		seed: args.seed,
@@ -1267,7 +1300,7 @@ async function runOutboundDecision(args: OutboundDecisionArgs): Promise<void> {
 	});
 	if (!domain) {
 		process.stderr.write("⚠ --record-decision: no mulch domain inferred (skipping)\n");
-		return;
+		return null;
 	}
 	const approach = typeof args.approach === "string" ? args.approach : "";
 	const result = recordDecision({
@@ -1279,5 +1312,7 @@ async function runOutboundDecision(args: OutboundDecisionArgs): Promise<void> {
 	});
 	if (!result.ok) {
 		process.stderr.write(`⚠ --record-decision: ${result.reason ?? "failed"}\n`);
+		return null;
 	}
+	return result.mulchId ?? null;
 }

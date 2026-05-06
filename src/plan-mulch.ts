@@ -142,6 +142,7 @@ export interface RecordDecisionOptions {
 export interface RecordDecisionResult {
 	ok: boolean;
 	reason?: string;
+	mulchId?: string;
 }
 
 export function recordDecision(opts: RecordDecisionOptions): RecordDecisionResult {
@@ -152,7 +153,9 @@ export function recordDecision(opts: RecordDecisionOptions): RecordDecisionResul
 	}
 	try {
 		// `ml record decision` requires --title in addition to the spec args; pass
-		// the seed title so the recorded decision has a meaningful name.
+		// the seed title so the recorded decision has a meaningful name. --json
+		// is appended (not prepended) so existing fixture parsers that key off
+		// argv[0] === "record" keep working.
 		const result = Bun.spawnSync(
 			[
 				ml,
@@ -166,6 +169,7 @@ export function recordDecision(opts: RecordDecisionOptions): RecordDecisionResul
 				opts.approach,
 				"--evidence-seeds",
 				opts.planId,
+				"--json",
 			],
 			{ cwd, stdout: "pipe", stderr: "pipe" },
 		);
@@ -174,7 +178,19 @@ export function recordDecision(opts: RecordDecisionOptions): RecordDecisionResul
 			const detail = stderr ? `: ${stderr.split("\n")[0]}` : "";
 			return { ok: false, reason: `ml record failed${detail}` };
 		}
-		return { ok: true };
+		const stdout = new TextDecoder().decode(result.stdout).trim();
+		let mulchId: string | undefined;
+		if (stdout.length > 0) {
+			try {
+				const parsed = JSON.parse(stdout) as { record?: { id?: unknown } };
+				const id = parsed?.record?.id;
+				if (typeof id === "string" && id.length > 0) mulchId = id;
+			} catch {
+				// Older mulch versions or non-JSON output: still success, just
+				// no id to surface.
+			}
+		}
+		return mulchId ? { ok: true, mulchId } : { ok: true };
 	} catch (e) {
 		return { ok: false, reason: `ml record threw: ${(e as Error).message}` };
 	}
