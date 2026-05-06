@@ -1895,3 +1895,35 @@ describe("sd plan submit: child backref block (seeds-76af)", () => {
 		expect(spawned.description ?? "").toContain("Parent seed:");
 	});
 });
+
+describe("sd show on plan-spawned seeds", () => {
+	test("labels the plan's step list as 'Plan steps', not 'Children'", async () => {
+		const seedId = await createSeed(tmpDir, "Parent for show heading");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		expect(submit.exitCode).toBe(0);
+		const { children } = JSON.parse(submit.stdout) as { children: string[] };
+		const childId = children[0];
+		expect(childId).toBeDefined();
+
+		const { stdout, exitCode } = await run(["show", childId ?? "", "--format", "plain"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain(`Plan steps (${children.length}):`);
+		expect(stdout).not.toContain("Children (");
+	});
+
+	test("sd plan show keeps 'Children' framing", async () => {
+		const seedId = await createSeed(tmpDir, "Parent for plan-show heading");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		expect(submit.exitCode).toBe(0);
+		const { plan_id, children } = JSON.parse(submit.stdout) as {
+			plan_id: string;
+			children: string[];
+		};
+
+		const { stdout, exitCode } = await run(["plan", "show", plan_id], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain(`Children (${children.length}):`);
+	});
+});

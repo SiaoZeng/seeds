@@ -85,7 +85,7 @@ function renderPlanBlock(
 	if (plan.status === "draft") {
 		lines.push(`${accent("plan in draft — run sd plan submit")}`);
 	} else if (children && children.length > 0) {
-		lines.push(`${muted(`Children (${children.length}):`)}`);
+		lines.push(`${muted(`Plan steps (${children.length}):`)}`);
 		for (const c of children) {
 			lines.push(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}`);
 		}
