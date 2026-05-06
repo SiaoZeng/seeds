@@ -1,12 +1,13 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, openSync, renameSync, statSync, unlinkSync } from "node:fs";
 import { join } from "node:path";
-import type { Issue, Template } from "./types.ts";
+import type { Issue, Plan, Template } from "./types.ts";
 import {
 	ISSUES_FILE,
 	LOCK_RETRY_MS,
 	LOCK_STALE_MS,
 	LOCK_TIMEOUT_MS,
+	PLANS_FILE,
 	TEMPLATES_FILE,
 } from "./types.ts";
 
@@ -140,4 +141,32 @@ export function issuesPath(seedsDir: string): string {
 
 export function templatesPath(seedsDir: string): string {
 	return join(seedsDir, TEMPLATES_FILE);
+}
+
+export function plansPath(seedsDir: string): string {
+	return join(seedsDir, PLANS_FILE);
+}
+
+export async function readPlans(seedsDir: string): Promise<Plan[]> {
+	const file = Bun.file(join(seedsDir, PLANS_FILE));
+	if (!(await file.exists())) return [];
+	const content = await file.text();
+	return deduplicateById(parseJsonl<Plan>(content));
+}
+
+export async function writePlans(seedsDir: string, plans: Plan[]): Promise<void> {
+	const filePath = join(seedsDir, PLANS_FILE);
+	const tmpPath = `${filePath}.tmp.${randomBytes(4).toString("hex")}`;
+	const content = `${plans.map((p) => JSON.stringify(p)).join("\n")}\n`;
+	await Bun.write(tmpPath, content);
+	renameSync(tmpPath, filePath);
+}
+
+export async function appendPlan(seedsDir: string, plan: Plan): Promise<void> {
+	const filePath = join(seedsDir, PLANS_FILE);
+	const tmpPath = `${filePath}.tmp.${randomBytes(4).toString("hex")}`;
+	const file = Bun.file(filePath);
+	const existing = (await file.exists()) ? await file.text() : "";
+	await Bun.write(tmpPath, `${existing + JSON.stringify(plan)}\n`);
+	renameSync(tmpPath, filePath);
 }

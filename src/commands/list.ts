@@ -8,9 +8,10 @@ import {
 	outputJson,
 	printIssueOneLine,
 } from "../output.ts";
+import { loadPlanContext, planForIssue, planLineSuffix } from "../plan-context.ts";
 import { isSortMode, sortIssues, VALID_SORT_MODES } from "../sort.ts";
 import { readIssues } from "../store.ts";
-import type { Issue } from "../types.ts";
+import type { Issue, Plan } from "../types.ts";
 
 function parseArgs(args: string[]) {
 	const flags: Record<string, string | boolean> = {};
@@ -65,6 +66,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	const dir = seedsDir ?? (await findSeedsDir());
 	let issues = await readIssues(dir);
+	const planCtx = await loadPlanContext(dir);
 
 	if (statusFilter) {
 		issues = issues.filter((i: Issue) => i.status === statusFilter);
@@ -89,9 +91,16 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	issues = issues.slice(0, limit);
 
 	switch (fmt.mode) {
-		case "json":
-			outputJson({ success: true, command: "list", issues, count: issues.length });
+		case "json": {
+			const issuesWithPlan = issues.map((i) => issueJsonWithPlan(i, planForIssue(planCtx, i)));
+			outputJson({
+				success: true,
+				command: "list",
+				issues: issuesWithPlan,
+				count: issues.length,
+			});
 			return;
+		}
 		case "ids":
 			for (const issue of issues) console.log(issue.id);
 			return;
@@ -103,7 +112,10 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				console.log("No issues found.");
 				return;
 			}
-			for (const issue of issues) console.log(stripAnsi(formatIssueOneLine(issue)));
+			for (const issue of issues) {
+				const plan = planForIssue(planCtx, issue);
+				console.log(stripAnsi(formatIssueOneLine(issue) + planLineSuffix(plan)));
+			}
 			console.log(`\n${issues.length} issue(s)`);
 			return;
 		default:
@@ -111,10 +123,29 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				console.log("No issues found.");
 				return;
 			}
-			for (const issue of issues) printIssueOneLine(issue);
+			for (const issue of issues) {
+				const plan = planForIssue(planCtx, issue);
+				const suffix = planLineSuffix(plan);
+				if (suffix) {
+					process.stdout.write(`${formatIssueOneLine(issue)}${suffix}\n`);
+				} else {
+					printIssueOneLine(issue);
+				}
+			}
 			console.log(`\n${issues.length} issue(s)`);
 			return;
 	}
+}
+
+function issueJsonWithPlan(
+	issue: Issue,
+	plan: Plan | undefined,
+): Issue & {
+	plan_status?: string;
+	plan_children?: string[];
+} {
+	if (!plan) return issue;
+	return { ...issue, plan_status: plan.status, plan_children: plan.children };
 }
 
 export function register(program: Command): void {

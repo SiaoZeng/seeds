@@ -2,11 +2,15 @@ import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
 import { resolveFormat, stripAnsi, VALID_FORMATS } from "../format.ts";
 import {
+	accent,
+	brand,
 	formatIssueFull,
 	formatIssueOneLineCompact,
+	muted,
 	outputJson,
 	printIssueFull,
 } from "../output.ts";
+import { loadPlanContext, planForIssue, summarisePlanChildren } from "../plan-context.ts";
 import { readIssues } from "../store.ts";
 
 export async function run(args: string[], seedsDir?: string): Promise<void> {
@@ -29,10 +33,26 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const issue = issues.find((i) => i.id === id);
 	if (!issue) throw new Error(`Issue not found: ${id}`);
 
+	const planCtx = await loadPlanContext(dir);
+	const plan = planForIssue(planCtx, issue);
+	const planChildren = plan ? summarisePlanChildren(plan, issues) : undefined;
+
 	switch (fmt.mode) {
-		case "json":
-			outputJson({ success: true, command: "show", issue });
+		case "json": {
+			const out: Record<string, unknown> = { success: true, command: "show", issue };
+			if (plan) {
+				out.plan = {
+					id: plan.id,
+					status: plan.status,
+					revision: plan.revision,
+					template: plan.template,
+					children: plan.children,
+				};
+				out.plan_children = planChildren;
+			}
+			outputJson(out);
 			return;
+		}
 		case "ids":
 			console.log(issue.id);
 			return;
@@ -40,12 +60,33 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			console.log(formatIssueOneLineCompact(issue));
 			return;
 		case "plain":
-			console.log(stripAnsi(formatIssueFull(issue)));
+			console.log(stripAnsi(formatIssueFull(issue) + renderPlanBlock(plan, planChildren)));
 			return;
 		default:
 			printIssueFull(issue);
+			if (plan) process.stdout.write(renderPlanBlock(plan, planChildren));
 			return;
 	}
+}
+
+function renderPlanBlock(
+	plan: ReturnType<typeof planForIssue>,
+	children: ReturnType<typeof summarisePlanChildren> | undefined,
+): string {
+	if (!plan) return "";
+	const lines: string[] = [
+		"",
+		`${brand("Plan:")} ${accent(plan.id)}  ${muted(`[${plan.status}]`)}`,
+	];
+	if (plan.status === "draft") {
+		lines.push(`${accent("plan in draft — run sd plan submit")}`);
+	} else if (children && children.length > 0) {
+		lines.push(`${muted(`Children (${children.length}):`)}`);
+		for (const c of children) {
+			lines.push(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}`);
+		}
+	}
+	return `\n${lines.join("\n")}\n`;
 }
 
 export function register(program: Command): void {

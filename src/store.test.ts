@@ -2,8 +2,17 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { appendIssue, readIssues, withLock, writeIssues } from "./store";
-import type { Issue } from "./types";
+import {
+	appendIssue,
+	appendPlan,
+	plansPath,
+	readIssues,
+	readPlans,
+	withLock,
+	writeIssues,
+	writePlans,
+} from "./store";
+import type { Issue, Plan } from "./types";
 
 function makeIssue(overrides: Partial<Issue> = {}): Issue {
 	const now = new Date().toISOString();
@@ -137,6 +146,109 @@ describe("writeIssues", () => {
 		const content = await Bun.file(join(seedsDir, "issues.jsonl")).text();
 		const lines = content.split("\n").filter((l) => l.trim() !== "");
 		expect(lines).toHaveLength(2);
+	});
+});
+
+function makePlan(overrides: Partial<Plan> = {}): Plan {
+	const now = new Date().toISOString();
+	return {
+		id: "pl-a1b2",
+		seed: "test-9c4d",
+		template: "feature",
+		status: "draft",
+		revision: 1,
+		sections: { context: "why", steps: [] },
+		children: [],
+		createdAt: now,
+		updatedAt: now,
+		...overrides,
+	};
+}
+
+describe("readPlans", () => {
+	test("returns empty array when plans.jsonl does not exist", async () => {
+		const plans = await readPlans(seedsDir);
+		expect(plans).toEqual([]);
+	});
+
+	test("reads single plan", async () => {
+		const plan = makePlan();
+		await Bun.write(plansPath(seedsDir), `${JSON.stringify(plan)}\n`);
+		const plans = await readPlans(seedsDir);
+		expect(plans).toHaveLength(1);
+		expect(plans[0]).toEqual(plan);
+	});
+
+	test("deduplicates by id — last occurrence wins", async () => {
+		const original = makePlan({ id: "pl-a1b2", revision: 1 });
+		const updated = makePlan({ id: "pl-a1b2", revision: 2 });
+		const content = [JSON.stringify(original), JSON.stringify(updated), ""].join("\n");
+		await Bun.write(plansPath(seedsDir), content);
+		const plans = await readPlans(seedsDir);
+		expect(plans).toHaveLength(1);
+		expect(plans[0]?.revision).toBe(2);
+	});
+});
+
+describe("appendPlan", () => {
+	test("creates plans.jsonl when missing", async () => {
+		const plan = makePlan();
+		await appendPlan(seedsDir, plan);
+		const plans = await readPlans(seedsDir);
+		expect(plans).toEqual([plan]);
+	});
+
+	test("concurrent appends under withLock all land", async () => {
+		await Promise.all(
+			Array.from({ length: 8 }, (_, i) =>
+				withLock(plansPath(seedsDir), () =>
+					appendPlan(seedsDir, makePlan({ id: `pl-${i.toString(16).padStart(4, "0")}` })),
+				),
+			),
+		);
+		const plans = await readPlans(seedsDir);
+		expect(plans).toHaveLength(8);
+	});
+
+	test("each appended plan is on its own line (no partial lines)", async () => {
+		await appendPlan(seedsDir, makePlan({ id: "pl-aaaa" }));
+		await appendPlan(seedsDir, makePlan({ id: "pl-bbbb" }));
+		const content = await Bun.file(plansPath(seedsDir)).text();
+		const lines = content.split("\n").filter((l) => l.trim() !== "");
+		expect(lines).toHaveLength(2);
+		for (const line of lines) {
+			expect(() => JSON.parse(line)).not.toThrow();
+		}
+	});
+});
+
+describe("writePlans", () => {
+	test("round-trip: write then read returns the same plans", async () => {
+		const a = makePlan({ id: "pl-1111", template: "feature", revision: 3 });
+		const b = makePlan({ id: "pl-2222", status: "approved", children: ["test-c001"] });
+		await writePlans(seedsDir, [a, b]);
+		const plans = await readPlans(seedsDir);
+		expect(plans).toEqual([a, b]);
+	});
+
+	test("atomic rewrite leaves no partial line on disk", async () => {
+		// Seed with one plan, then overwrite with two — confirm content is exactly the new set
+		await appendPlan(seedsDir, makePlan({ id: "pl-1111" }));
+		const a = makePlan({ id: "pl-aaaa" });
+		const b = makePlan({ id: "pl-bbbb" });
+		await writePlans(seedsDir, [a, b]);
+		const content = await Bun.file(plansPath(seedsDir)).text();
+		const lines = content.split("\n").filter((l) => l.trim() !== "");
+		expect(lines).toHaveLength(2);
+		expect(JSON.parse(lines[0] ?? "{}").id).toBe("pl-aaaa");
+		expect(JSON.parse(lines[1] ?? "{}").id).toBe("pl-bbbb");
+	});
+
+	test("writes empty array as empty file", async () => {
+		await appendPlan(seedsDir, makePlan());
+		await writePlans(seedsDir, []);
+		const plans = await readPlans(seedsDir);
+		expect(plans).toEqual([]);
 	});
 });
 

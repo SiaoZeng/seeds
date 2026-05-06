@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Command } from "commander";
 import { outputJson, printSuccess } from "../output.ts";
-import { CONFIG_FILE, ISSUES_FILE, SEEDS_DIR_NAME, TEMPLATES_FILE } from "../types.ts";
+import { CONFIG_FILE, ISSUES_FILE, PLANS_FILE, SEEDS_DIR_NAME, TEMPLATES_FILE } from "../types.ts";
 
 export async function run(args: string[]): Promise<void> {
 	const jsonMode = args.includes("--json");
@@ -27,13 +27,15 @@ export async function run(args: string[]): Promise<void> {
 	// empty JSONL files
 	writeFileSync(join(seedsDir, ISSUES_FILE), "");
 	writeFileSync(join(seedsDir, TEMPLATES_FILE), "");
+	writeFileSync(join(seedsDir, PLANS_FILE), "");
 
 	// .gitignore inside .seeds/
 	writeFileSync(join(seedsDir, ".gitignore"), "*.lock\n");
 
 	// Append .gitattributes to project root
 	const gitattrsPath = join(cwd, ".gitattributes");
-	const entry = ".seeds/issues.jsonl merge=union\n.seeds/templates.jsonl merge=union\n";
+	const entry =
+		".seeds/issues.jsonl merge=union\n.seeds/templates.jsonl merge=union\n.seeds/plans.jsonl merge=union\n";
 	if (existsSync(gitattrsPath)) {
 		const existing = readFileSync(gitattrsPath, "utf8");
 		if (!existing.includes(".seeds/issues.jsonl")) {

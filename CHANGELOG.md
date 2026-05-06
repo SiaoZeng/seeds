@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sd plan` command tree (Phase 1 MVP of the structured planning facilitation workflow):
+  - `sd plan templates` — list available plan templates (Phase 1 ships only `feature`)
+  - `sd plan prompt <seed-id> [--template <name>]` — emit structured `plan_request` JSON the LLM consumes to fill out a plan; default template inferred from seed type
+  - `sd plan submit <seed-id> --plan <file|->` — validate a plan submission via AJV + structural blocks-index check, spawn child seeds with correct `blockedBy` id remap, append the plan row to `.seeds/plans.jsonl`, and update parent seed (`plan_id` back-pointer + `blockedBy = [children]`); `-` reads from stdin; validation failures emit the documented partial-state diff JSON to stderr
+  - `sd plan show <pl-id>` — display a plan with sections, child summaries, status, and a "review suggested" hint when no reviewer is recorded
+  - `sd plan list [--seed --status --outcome --template]` — query plans with combinable filters; default sort `createdAt` desc
+  - `sd plan validate <pl-id>` — re-run validation against the current template definition (groundwork for Phase 2 config-driven templates)
+- `Plan` type, `PLANS_FILE` constant, and plan storage layer (`readPlans`/`writePlans`/`appendPlan`/`plansPath`) mirroring the existing issue/template helpers and lock model
+- `Issue.plan_id` and `Issue.plan_step_index` (additive optional fields; existing rows remain valid)
+- Hardcoded built-in `feature` template + AJV schema in `src/plan-templates/feature.ts`; structural validation for `steps[].blocks` (no self-reference, no out-of-range indices)
+- Plan-awareness in `sd ready`, `sd show`, and `sd list`: ready surfaces seeds whose plan is in `draft` even if otherwise blocked; show inlines child seeds for approved/active/done plans and shows a draft hint otherwise; list adds a `[plan <status>]` indicator. `--json` parity (`plan_status`, `plan_children`).
+- `.seeds/plans.jsonl` is created on `sd init` and added to `.gitattributes` with `merge=union`
+
 ## [0.3.0] - 2026-05-04
 
 ### Added

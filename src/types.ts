@@ -11,9 +11,29 @@ export interface Issue {
 	blockedBy?: string[];
 	labels?: string[];
 	convoy?: string;
+	plan_id?: string;
+	plan_step_index?: number;
 	createdAt: string;
 	updatedAt: string;
 	closedAt?: string;
+}
+
+export type PlanStatus = "draft" | "approved" | "active" | "done";
+export type PlanOutcome = "success" | "partial" | "failure";
+
+export interface Plan {
+	id: string;
+	seed: string;
+	template: string;
+	status: PlanStatus;
+	revision: number;
+	sections: Record<string, unknown>;
+	children: string[];
+	outcome?: PlanOutcome;
+	outcomeNote?: string;
+	reviewedBy?: string;
+	createdAt: string;
+	updatedAt: string;
 }
 
 export interface TemplateStep {
@@ -45,6 +65,7 @@ export interface ConvoyStatus {
 export const SEEDS_DIR_NAME = ".seeds";
 export const ISSUES_FILE = "issues.jsonl";
 export const TEMPLATES_FILE = "templates.jsonl";
+export const PLANS_FILE = "plans.jsonl";
 export const CONFIG_FILE = "config.yaml";
 export const LOCK_STALE_MS = 30_000;
 export const LOCK_RETRY_MS = 100;
