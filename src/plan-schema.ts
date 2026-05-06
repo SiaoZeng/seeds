@@ -142,11 +142,13 @@ function validateStepBlocks(data: unknown, sectionKey: string): ErrorEntry[] {
 	return errors;
 }
 
-// Map seed type -> default template name (PLAN_SPEC.md:271). Phase 2 still
-// ships only `feature` as a built-in; bug/refactor are user-defined for now.
+// Map seed type -> default template name (PLAN_SPEC.md:271, 429). Hard-coded
+// per the answer to open question 4. `--template` always overrides. `refactor`
+// is intentionally opt-in via `--template` only; see seeds-6730 / the header
+// comment on BUILTIN_REFACTOR_TEMPLATE.
 const TYPE_DEFAULTS: Record<string, string> = {
 	task: "feature",
-	bug: "feature",
+	bug: "bug",
 	feature: "feature",
 	epic: "feature",
 };

@@ -107,9 +107,10 @@ describe("sd plan templates", () => {
 			count: number;
 		};
 		expect(parsed.success).toBe(true);
-		expect(parsed.count).toBe(1);
-		expect(parsed.templates[0]?.name).toBe("feature");
-		expect(parsed.templates[0]?.description.length).toBeGreaterThan(0);
+		expect(parsed.count).toBe(3);
+		const names = parsed.templates.map((t) => t.name);
+		expect(names).toEqual(["bug", "feature", "refactor"]);
+		for (const t of parsed.templates) expect(t.description.length).toBeGreaterThan(0);
 	});
 });
 
@@ -1158,5 +1159,422 @@ describe("plan-awareness integration: ready / show / list", () => {
 		};
 		const seed = result.issues.find((i) => i.id === seedId);
 		expect(seed?.plan_status).toBeUndefined();
+	});
+});
+
+async function submitPlanFor(seedId: string): Promise<string> {
+	const planPath = await writePlanFile(tmpDir, validPlanFor());
+	const { stdout } = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+	return (JSON.parse(stdout) as { plan_id: string }).plan_id;
+}
+
+async function readPlansFromDisk(): Promise<
+	Array<{ id: string; outcome?: string; outcomeNote?: string; reviewedBy?: string }>
+> {
+	const path = join(tmpDir, ".seeds", "plans.jsonl");
+	const text = await Bun.file(path).text();
+	return text
+		.split("\n")
+		.filter((l) => l.trim())
+		.map((l) => JSON.parse(l));
+}
+
+describe("sd plan outcome (Phase 5 / PLAN_SPEC.md:393-402)", () => {
+	test("--result success persists outcome on the plan row", async () => {
+		const seed = await createSeed(tmpDir, "Outcome target");
+		const planId = await submitPlanFor(seed);
+		const { stdout, exitCode } = await run(
+			["plan", "outcome", planId, "--result", "success", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { outcome: string; plan_id: string };
+		expect(result.outcome).toBe("success");
+		expect(result.plan_id).toBe(planId);
+		const plans = await readPlansFromDisk();
+		const stored = plans.find((p) => p.id === planId);
+		expect(stored?.outcome).toBe("success");
+		expect(stored?.outcomeNote).toBeUndefined();
+	});
+
+	test("--result partial --note persists both fields", async () => {
+		const seed = await createSeed(tmpDir, "With note");
+		const planId = await submitPlanFor(seed);
+		const { exitCode } = await run(
+			[
+				"plan",
+				"outcome",
+				planId,
+				"--result",
+				"partial",
+				"--note",
+				"auth provider deprecated",
+				"--json",
+			],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const stored = (await readPlansFromDisk()).find((p) => p.id === planId);
+		expect(stored?.outcome).toBe("partial");
+		expect(stored?.outcomeNote).toBe("auth provider deprecated");
+	});
+
+	test("rejects an invalid --result value with non-zero exit", async () => {
+		const seed = await createSeed(tmpDir, "Bad result");
+		const planId = await submitPlanFor(seed);
+		const { stderr, exitCode } = await run(["plan", "outcome", planId, "--result", "wat"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr.toLowerCase()).toContain("must be one of");
+	});
+
+	test("warns (does not fail) when children are still open", async () => {
+		const seed = await createSeed(tmpDir, "Has open children");
+		const planId = await submitPlanFor(seed);
+		const { stderr, exitCode } = await run(
+			["plan", "outcome", planId, "--result", "failure", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		expect(stderr).toMatch(/open child/);
+	});
+
+	test("unknown plan id errors cleanly", async () => {
+		const { stderr, exitCode } = await run(
+			["plan", "outcome", "pl-9999", "--result", "success"],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stderr.toLowerCase()).toContain("not found");
+	});
+
+	test("--json includes outcome on success", async () => {
+		const seed = await createSeed(tmpDir, "Plain JSON");
+		const planId = await submitPlanFor(seed);
+		const { stdout } = await run(
+			["plan", "outcome", planId, "--result", "success", "--json"],
+			tmpDir,
+		);
+		const parsed = JSON.parse(stdout) as { success: boolean; outcome: string };
+		expect(parsed.success).toBe(true);
+		expect(parsed.outcome).toBe("success");
+	});
+});
+
+describe("sd plan review (Phase 5 / PLAN_SPEC.md:404-413)", () => {
+	test("--by sets reviewedBy and is informational only", async () => {
+		const seed = await createSeed(tmpDir, "Reviewed");
+		const planId = await submitPlanFor(seed);
+		const { stdout, exitCode } = await run(
+			["plan", "review", planId, "--by", "alice", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { reviewedBy: string };
+		expect(parsed.reviewedBy).toBe("alice");
+		const stored = (await readPlansFromDisk()).find((p) => p.id === planId);
+		expect(stored?.reviewedBy).toBe("alice");
+	});
+
+	test("show hint appears on approved plan with no reviewer", async () => {
+		const seed = await createSeed(tmpDir, "Approved no review");
+		const planId = await submitPlanFor(seed);
+		const { stdout, exitCode } = await run(["plan", "show", planId], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("Review suggested");
+	});
+
+	test("show hint disappears once reviewedBy is set", async () => {
+		const seed = await createSeed(tmpDir, "Approved + reviewer");
+		const planId = await submitPlanFor(seed);
+		await run(["plan", "review", planId, "--by", "bob"], tmpDir);
+		const { stdout } = await run(["plan", "show", planId], tmpDir);
+		expect(stdout).not.toContain("Review suggested");
+		expect(stdout).toContain("Reviewed: bob");
+	});
+
+	test("show hint absent for draft plans", async () => {
+		const seed = await createSeed(tmpDir, "Drafty");
+		// Inject a draft plan directly so we cover the status=draft branch.
+		const now = new Date().toISOString();
+		const planRow = {
+			id: "pl-d100",
+			seed,
+			template: "feature",
+			status: "draft",
+			revision: 1,
+			sections: {},
+			children: [],
+			createdAt: now,
+			updatedAt: now,
+		};
+		const planPath = join(tmpDir, ".seeds", "plans.jsonl");
+		const existing = await Bun.file(planPath).text();
+		await Bun.write(
+			planPath,
+			`${existing.trim() ? `${existing.trimEnd()}\n` : ""}${JSON.stringify(planRow)}\n`,
+		);
+		const { stdout, exitCode } = await run(["plan", "show", "pl-d100"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).not.toContain("Review suggested");
+	});
+
+	test("show hint absent for active plans once reviewer set, present without reviewer", async () => {
+		// Submit + close one child to flip approved → active.
+		const seed = await createSeed(tmpDir, "Active path");
+		const planId = await submitPlanFor(seed);
+		const showJson = await run(["plan", "show", planId, "--json"], tmpDir);
+		const childIds = (
+			JSON.parse(showJson.stdout) as { children: Array<{ id: string }> }
+		).children.map((c) => c.id);
+		const firstChild = childIds[0];
+		if (!firstChild) throw new Error("no children");
+		await run(["update", firstChild, "--status", "in_progress"], tmpDir);
+
+		const { stdout: humanOutput } = await run(["plan", "show", planId], tmpDir);
+		expect(humanOutput).toContain("active");
+		expect(humanOutput).toContain("Review suggested");
+
+		await run(["plan", "review", planId, "--by", "carol"], tmpDir);
+		const { stdout: afterReview } = await run(["plan", "show", planId], tmpDir);
+		expect(afterReview).toContain("Reviewed: carol");
+		expect(afterReview).not.toContain("Review suggested");
+	});
+
+	test("--json show includes reviewedBy without the cosmetic hint", async () => {
+		const seed = await createSeed(tmpDir, "JSON review");
+		const planId = await submitPlanFor(seed);
+		await run(["plan", "review", planId, "--by", "dora"], tmpDir);
+		const { stdout } = await run(["plan", "show", planId, "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as { plan: { reviewedBy?: string } };
+		expect(parsed.plan.reviewedBy).toBe("dora");
+		expect(stdout).not.toContain("Review suggested");
+	});
+
+	test("unknown plan id errors cleanly", async () => {
+		const { stderr, exitCode } = await run(["plan", "review", "pl-9999", "--by", "ghost"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr.toLowerCase()).toContain("not found");
+	});
+});
+
+const VALID_REPRO =
+	"On master, run `bun test src/foo.test.ts`; the third assertion fails on Linux but passes on macOS.";
+const VALID_ROOT_CAUSE =
+	"Path comparison in src/foo.ts assumes case-insensitive matching; Linux is case-sensitive.";
+
+function validBugPlan(): { template: string; sections: Record<string, unknown> } {
+	return {
+		template: "bug",
+		sections: {
+			context: "Affects CI on Linux runners.",
+			reproduction: VALID_REPRO,
+			root_cause: VALID_ROOT_CAUSE,
+			approach: "Normalize both sides to lowercase before comparing.",
+			steps: [
+				{ title: "Add lowercasing helper", type: "task", priority: 2, blocks: [] },
+				{ title: "Wire through caller", type: "task", priority: 2, blocks: [0] },
+			],
+			acceptance: ["Regression test passes on Linux"],
+		},
+	};
+}
+
+const VALID_INVARIANT =
+	"Public API of src/foo.ts (exported function names + signatures) and observable behavior (return values, errors) MUST match before and after.";
+
+function validRefactorPlan(): { template: string; sections: Record<string, unknown> } {
+	return {
+		template: "refactor",
+		sections: {
+			context: "Module has grown unwieldy and obscures intent.",
+			behavior_invariant: VALID_INVARIANT,
+			approach: "Split into pure helpers + thin orchestrator.",
+			steps: [{ title: "Extract helpers", type: "task", priority: 2, blocks: [] }],
+			acceptance: ["All existing tests pass unchanged"],
+		},
+	};
+}
+
+describe("sd plan: built-in bug template (Phase 5 / PLAN_SPEC.md:268)", () => {
+	test("sd plan templates lists bug", async () => {
+		const { stdout } = await run(["plan", "templates"], tmpDir);
+		expect(stdout).toContain("bug");
+	});
+
+	test("inference: bug-typed seed picks the bug template", async () => {
+		const seed = await createSeed(tmpDir, "Bug seed", "bug");
+		const { stdout } = await run(["plan", "prompt", seed, "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as { plan_request: { template: string } };
+		expect(parsed.plan_request.template).toBe("bug");
+	});
+
+	test("inference: task-typed seed still picks feature (regression)", async () => {
+		const seed = await createSeed(tmpDir, "Plain task", "task");
+		const { stdout } = await run(["plan", "prompt", seed, "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as { plan_request: { template: string } };
+		expect(parsed.plan_request.template).toBe("feature");
+	});
+
+	test("submit golden path: full bug plan validates and spawns children", async () => {
+		const seed = await createSeed(tmpDir, "Repro this", "bug");
+		const planPath = await writePlanFile(tmpDir, validBugPlan());
+		const { stdout, exitCode } = await run(
+			["plan", "submit", seed, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as { plan_id: string; children: string[] };
+		expect(parsed.children.length).toBe(2);
+		const plans = await readPlansFromDisk();
+		expect(plans.find((p) => p.id === parsed.plan_id)).toBeDefined();
+	});
+
+	test("validation: missing reproduction → diff lists it", async () => {
+		const seed = await createSeed(tmpDir, "Bad bug", "bug");
+		const plan = validBugPlan();
+		const sections = plan.sections as Record<string, unknown>;
+		delete sections.reproduction;
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", seed, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("reproduction");
+	});
+
+	test("validation: short reproduction → min_length error", async () => {
+		const seed = await createSeed(tmpDir, "Short repro", "bug");
+		const plan = validBugPlan();
+		(plan.sections as Record<string, unknown>).reproduction = "too short";
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", seed, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("reproduction");
+	});
+
+	test("validation: short root_cause → min_length error", async () => {
+		const seed = await createSeed(tmpDir, "Short cause", "bug");
+		const plan = validBugPlan();
+		(plan.sections as Record<string, unknown>).root_cause = "obvious";
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", seed, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("root_cause");
+	});
+
+	test("validation: empty steps and empty acceptance both rejected", async () => {
+		const seed = await createSeed(tmpDir, "Empty arrays", "bug");
+		const plan = validBugPlan();
+		(plan.sections as Record<string, unknown>).steps = [];
+		(plan.sections as Record<string, unknown>).acceptance = [];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", seed, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("steps");
+		expect(stderr).toContain("acceptance");
+	});
+
+	test("override: project config wins over built-in bug template", async () => {
+		const cfgPath = join(tmpDir, ".seeds", "config.yaml");
+		const text = await Bun.file(cfgPath).text();
+		await Bun.write(
+			cfgPath,
+			`${text.trimEnd()}\nplan_templates:\n  bug:\n    sections:\n      summary:\n        required: true\n        kind: text\n        prompt: "Tiny bug summary"\n      steps:\n        required: true\n        kind: steps\n        min: 1\n        prompt: "Steps"\n`,
+		);
+		const seed = await createSeed(tmpDir, "Override bug", "bug");
+		const { stdout } = await run(["plan", "prompt", seed, "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as {
+			plan_request: { template: string; sections: Array<{ name: string }> };
+		};
+		const names = parsed.plan_request.sections.map((s) => s.name);
+		expect(names).toContain("summary");
+		expect(names).not.toContain("reproduction");
+	});
+});
+
+describe("sd plan: built-in refactor template (Phase 5 / PLAN_SPEC.md:269)", () => {
+	test("sd plan templates lists refactor", async () => {
+		const { stdout } = await run(["plan", "templates"], tmpDir);
+		expect(stdout).toContain("refactor");
+	});
+
+	test("--template refactor accepts a task-typed seed", async () => {
+		const seed = await createSeed(tmpDir, "Refactor candidate", "task");
+		const { stdout, exitCode } = await run(
+			["plan", "prompt", seed, "--template", "refactor", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as {
+			plan_request: { template: string; sections: Array<{ name: string }> };
+		};
+		expect(parsed.plan_request.template).toBe("refactor");
+		expect(parsed.plan_request.sections.map((s) => s.name)).toContain("behavior_invariant");
+	});
+
+	test("inference: task-typed seed without --template picks feature, NOT refactor", async () => {
+		const seed = await createSeed(tmpDir, "No refactor inference", "task");
+		const { stdout } = await run(["plan", "prompt", seed, "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as { plan_request: { template: string } };
+		expect(parsed.plan_request.template).toBe("feature");
+		expect(parsed.plan_request.template).not.toBe("refactor");
+	});
+
+	test("submit golden path: full refactor plan validates", async () => {
+		const seed = await createSeed(tmpDir, "Refactor plan", "task");
+		const planPath = await writePlanFile(tmpDir, validRefactorPlan());
+		const { exitCode } = await run(["plan", "submit", seed, "--plan", planPath, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+	});
+
+	test("validation: missing behavior_invariant → diff lists it", async () => {
+		const seed = await createSeed(tmpDir, "No invariant", "task");
+		const plan = validRefactorPlan();
+		delete (plan.sections as Record<string, unknown>).behavior_invariant;
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", seed, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("behavior_invariant");
+	});
+
+	test("validation: short behavior_invariant → min_length error", async () => {
+		const seed = await createSeed(tmpDir, "Short invariant", "task");
+		const plan = validRefactorPlan();
+		(plan.sections as Record<string, unknown>).behavior_invariant = "stays the same";
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", seed, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("behavior_invariant");
+	});
+
+	test("default refactor template has no risks section", async () => {
+		const seed = await createSeed(tmpDir, "Refactor sections", "task");
+		const { stdout } = await run(
+			["plan", "prompt", seed, "--template", "refactor", "--json"],
+			tmpDir,
+		);
+		const parsed = JSON.parse(stdout) as {
+			plan_request: { sections: Array<{ name: string }> };
+		};
+		const names = parsed.plan_request.sections.map((s) => s.name);
+		expect(names).not.toContain("risks");
+	});
+
+	test("override: project config wins over built-in refactor template", async () => {
+		const cfgPath = join(tmpDir, ".seeds", "config.yaml");
+		const text = await Bun.file(cfgPath).text();
+		await Bun.write(
+			cfgPath,
+			`${text.trimEnd()}\nplan_templates:\n  refactor:\n    sections:\n      goal:\n        required: true\n        kind: text\n        prompt: "Goal"\n      steps:\n        required: true\n        kind: steps\n        min: 1\n        prompt: "Steps"\n`,
+		);
+		const seed = await createSeed(tmpDir, "Override refactor", "task");
+		const { stdout } = await run(
+			["plan", "prompt", seed, "--template", "refactor", "--json"],
+			tmpDir,
+		);
+		const parsed = JSON.parse(stdout) as {
+			plan_request: { sections: Array<{ name: string }> };
+		};
+		const names = parsed.plan_request.sections.map((s) => s.name);
+		expect(names).toContain("goal");
+		expect(names).not.toContain("behavior_invariant");
 	});
 });

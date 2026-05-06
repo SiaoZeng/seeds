@@ -85,6 +85,21 @@ Every command supports `--json` for structured output. `sd list`, `sd ready`, `s
 | `sd stats` | Project statistics |
 | `sd sync` | Stage and commit `.seeds/` changes (`--status`, `--dry-run`) |
 
+### Plan Commands
+
+| Command | Description |
+|---------|-------------|
+| `sd plan templates` | List available plan templates |
+| `sd plan prompt <seed-id>` | Emit structured planning prompt JSON for a seed (`--template`, `--domain`) |
+| `sd plan submit <seed-id> --plan <file>` | Validate a plan, spawn child seeds, write the plan row (`--overwrite`, `--record-decision`, `--domain`) |
+| `sd plan show <pl-id>` | Show a plan with sections, children, and status (recurses through nested sub-plans up to `max_plan_depth`) |
+| `sd plan validate <pl-id>` | Re-run validation against the current template definition |
+| `sd plan list` | List plans (`--seed`, `--status`, `--outcome`, `--template`) |
+| `sd plan outcome <pl-id> --result <success\|partial\|failure>` | Record a plan outcome (`--note`) |
+| `sd plan review <pl-id> --by <name>` | Record a reviewer (informational; not a state transition) |
+
+See [Planning](#planning) below for the end-to-end workflow.
+
 ### Template Commands
 
 | Command | Description |
@@ -116,6 +131,89 @@ Every command supports `--json` for structured output. `sd list`, `sd ready`, `s
 | `sd upgrade` | Upgrade seeds to latest version from npm (`--check`) |
 | `sd completions <shell>` | Output shell completion script (bash, zsh, fish) |
 | `sd migrate-from-beads` | Import `.beads/issues.jsonl` into `.seeds/` |
+
+## Planning
+
+`sd plan` adds structured planning that spawns child seeds. Use it when work is large or ambiguous enough that an LLM benefits from decomposing it before implementing — for small, well-scoped tasks just `sd create` directly.
+
+The walkthrough is a three-step loop: **prompt → fill → submit**.
+
+### 1. Emit a prompt
+
+```bash
+sd plan prompt seeds-9c4d --json
+```
+
+Returns a structured prompt request the LLM can fill in:
+
+```json
+{
+  "plan_request": {
+    "seed": "seeds-9c4d",
+    "template": "feature",
+    "instructions": "Fill every section. Required fields are marked.",
+    "sections": [
+      { "name": "context", "required": true, "kind": "text", "min_length": 50, "prompt": "Why does this work need to happen?", "prior_art": [] },
+      { "name": "approach", "required": true, "kind": "text", "prompt": "What's the chosen approach, and why this over alternatives?", "prior_art": [] },
+      { "name": "steps", "required": true, "kind": "steps", "min": 2, "prompt": "Decompose into ordered, independent implementation steps." },
+      { "name": "acceptance", "required": true, "kind": "list", "min": 1, "prompt": "Concrete, verifiable conditions for plan completion." }
+    ],
+    "validation": { "all_required_present": true, "min_steps": 2, "min_acceptance": 1 }
+  }
+}
+```
+
+### 2. Submit the filled plan
+
+The LLM produces a submission JSON in the same shape, with concrete content. Each `steps[]` entry becomes a child seed; `blocks: [step_index]` translates into seed-level `blockedBy` dependencies.
+
+```json
+{
+  "template": "feature",
+  "sections": {
+    "context": "...",
+    "approach": "Use AJV to validate template-driven plans, mirroring mulch's custom_types pipeline.",
+    "steps": [
+      { "title": "Schema generator", "type": "task", "priority": 1, "blocks": [] },
+      { "title": "Submit command", "type": "task", "priority": 1, "blocks": [0] },
+      { "title": "Show command",   "type": "task", "priority": 2, "blocks": [0] }
+    ],
+    "acceptance": ["End-to-end submit + show works"]
+  }
+}
+```
+
+```bash
+sd plan submit seeds-9c4d --plan plan.json
+```
+
+Validates against the template, spawns one child seed per step, wires `blockedBy` from `step.blocks`, and writes a `plans.jsonl` row with status `approved`.
+
+### 3. Show, outcome, review
+
+```bash
+sd plan show pl-a1b2                   # sections, children, recursive sub-plans
+sd plan outcome pl-a1b2 --result success
+sd plan review pl-a1b2 --by alice      # optional, informational
+```
+
+Outcomes (`success | partial | failure`) are storage-only — aggregation and retros are out of scope and left to teams. Review is suggested but never gating: `sd plan show` prints a "review suggested" hint when the plan is `approved`/`active` and no reviewer is recorded.
+
+### Built-in templates
+
+| Template   | Default for      | Adds                                      |
+|------------|------------------|-------------------------------------------|
+| `feature`  | `task`, `feature`, `epic` | `context`, `approach`, `alternatives`, `steps`, `risks`, `acceptance` |
+| `bug`      | `bug`            | `reproduction`, `root_cause`              |
+| `refactor` | opt-in only      | `behavior_invariant` (must stay equal)    |
+
+`refactor` is opt-in via `--template refactor` — it has no matching seed type so seeds does not auto-route to it. Custom templates declared under `plan_templates:` in `.seeds/config.yaml` override the built-ins.
+
+### Nested plans
+
+A step can declare `plan_template: <name>` to spawn a child seed that requires its own sub-plan. The child is created with `requires_plan: true` and is hidden from `sd ready` until its plan is submitted. `sd plan show` recursively renders nested plans up to `max_plan_depth` (default 3).
+
+Full spec: see [PLAN_SPEC.md](./PLAN_SPEC.md).
 
 ## Architecture
 

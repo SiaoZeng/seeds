@@ -162,15 +162,112 @@ export const BUILTIN_FEATURE_TEMPLATE: PlanTemplate = {
 	},
 };
 
+// Built-in `bug` template (PLAN_SPEC.md:268). Defect-fix framing: requires
+// reproduction + root_cause separately from the fix approach. Wired into the
+// type → template mapping so seed.type=bug picks this template by default.
+export const BUILTIN_BUG_TEMPLATE: PlanTemplate = {
+	name: "bug",
+	description: "Defect fix. Adds reproduction and root_cause sections. Default for type: bug.",
+	sections: {
+		context: {
+			required: true,
+			kind: "text",
+			prompt: "Why does fixing this matter? Who is affected and how?",
+		},
+		reproduction: {
+			required: true,
+			kind: "text",
+			min_length: 50,
+			prompt: "Concrete steps to reproduce. Inputs, environment, observed vs. expected.",
+		},
+		root_cause: {
+			required: true,
+			kind: "text",
+			min_length: 50,
+			prompt: "What's actually broken? Trace the defect to its source, not just the symptom.",
+		},
+		approach: {
+			required: true,
+			kind: "text",
+			prompt: "Chosen fix and the rationale for it over alternatives.",
+		},
+		steps: {
+			required: true,
+			kind: "steps",
+			min: 1,
+			prompt: "Ordered fix steps. Each becomes a child seed.",
+		},
+		acceptance: {
+			required: true,
+			kind: "list",
+			item: "text",
+			min: 1,
+			prompt: "Verifiable conditions: regression test, behavior, etc.",
+		},
+	},
+};
+
+// Built-in `refactor` template (PLAN_SPEC.md:269). Internal restructuring with
+// no observable behavior change; the invariant is the load-bearing field.
+//
+// Inference choice (PLAN_SPEC.md open question 4 / seeds-6730 decision):
+// `refactor` is opt-in via `--template refactor` only. There is no `refactor`
+// seed type in the wider seeds taxonomy, so seed.type → template mapping does
+// not auto-route to this template. `bug` chose the opposite direction because
+// `bug` is already a seed type.
+export const BUILTIN_REFACTOR_TEMPLATE: PlanTemplate = {
+	name: "refactor",
+	description:
+		"Internal restructuring. Adds behavior_invariant (must stay equal). Opt-in via --template refactor.",
+	sections: {
+		context: {
+			required: true,
+			kind: "text",
+			prompt: "Why this refactor? What pain does it relieve?",
+		},
+		behavior_invariant: {
+			required: true,
+			kind: "text",
+			min_length: 50,
+			prompt:
+				"The contract that MUST remain equal across the refactor. Be specific — this is what acceptance tests verify.",
+		},
+		approach: {
+			required: true,
+			kind: "text",
+			prompt: "Chosen restructuring strategy.",
+		},
+		steps: {
+			required: true,
+			kind: "steps",
+			min: 1,
+			prompt: "Ordered restructuring steps. Each becomes a child seed.",
+		},
+		acceptance: {
+			required: true,
+			kind: "list",
+			item: "text",
+			min: 1,
+			prompt: "How we'll verify the invariant is preserved.",
+		},
+	},
+};
+
+const BUILTIN_PLAN_TEMPLATES: Record<string, PlanTemplate> = {
+	feature: BUILTIN_FEATURE_TEMPLATE,
+	bug: BUILTIN_BUG_TEMPLATE,
+	refactor: BUILTIN_REFACTOR_TEMPLATE,
+};
+
 export async function loadPlanTemplates(seedsDir: string): Promise<Record<string, PlanTemplate>> {
 	const file = Bun.file(join(seedsDir, CONFIG_FILE));
 	if (!(await file.exists())) {
-		return { feature: BUILTIN_FEATURE_TEMPLATE };
+		return { ...BUILTIN_PLAN_TEMPLATES };
 	}
 	const content = await file.text();
 	const data = parseYaml(content);
 	const userBlock = data.plan_templates;
-	const builtins: Record<string, PlanTemplate> = { feature: BUILTIN_FEATURE_TEMPLATE };
+	const builtins: Record<string, PlanTemplate> = { ...BUILTIN_PLAN_TEMPLATES };
 	if (!isPlainObject(userBlock)) return builtins;
 
 	const result: Record<string, PlanTemplate> = { ...builtins };

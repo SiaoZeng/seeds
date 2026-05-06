@@ -191,6 +191,25 @@ sd tpl pour <id> --prefix <text>       Instantiate template into issues
 sd tpl status <id>                     Show convoy status
 ```
 
+### Plan Commands
+
+```
+sd plan templates                      List available plan templates (built-in: feature, bug, refactor)
+sd plan prompt <seed-id>               Emit structured planning prompt JSON for a seed
+  --template <name>                    Override the inferred template
+  --domain <name>                      Force the mulch domain for prior_art enrichment
+sd plan submit <seed-id> --plan <file> Validate, spawn child seeds, write plan row
+  --overwrite                          Replace an existing non-draft plan; bumps revision
+  --record-decision                    Best-effort: record approach as a mulch decision on success
+  --domain <name>                      Force mulch domain for --record-decision
+sd plan show <pl-id>                   Show plan with sections, children, and nested sub-plans
+sd plan validate <pl-id>               Re-run validation against the current template
+sd plan list                           List plans
+  --seed --status --outcome --template
+sd plan outcome <pl-id> --result <v>   Record success | partial | failure (--note <text>)
+sd plan review <pl-id> --by <name>     Record a reviewer (informational; not a state transition)
+```
+
 ## Coding Conventions
 
 ### Formatting
@@ -221,6 +240,14 @@ sd tpl status <id>                     Show convoy status
 - Each CLI command gets its own file in `src/commands/`
 - Tests colocated with source (e.g., `src/store.test.ts`)
 - Core modules at `src/` root (types, store, id, config, output, yaml)
+
+### Planning
+
+- Use `sd plan` when work is large or ambiguous enough that an LLM benefits from structured decomposition before implementing.
+- For small, well-scoped tasks just `sd create` directly — planning has overhead.
+- Built-in templates: `feature` (default for `task`/`feature`/`epic`), `bug` (default for `bug`), `refactor` (opt-in via `--template refactor`).
+- The flow is `sd plan prompt <seed>` → fill the JSON → `sd plan submit <seed> --plan <file>`. Submit spawns one child seed per step and wires `step.blocks` into `blockedBy` dependencies.
+- Plan outcomes (`success | partial | failure`) and reviewers are storage-only — they never gate child progress.
 
 ## Testing
 

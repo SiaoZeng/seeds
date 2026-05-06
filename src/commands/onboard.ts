@@ -5,7 +5,7 @@ import { findSeedsDir, projectRootFromSeedsDir } from "../config.ts";
 import { hasMarkerSection, replaceMarkerSection, wrapInMarkers } from "../markers.ts";
 import { outputJson, printSuccess } from "../output.ts";
 
-const ONBOARD_VERSION = 1;
+const ONBOARD_VERSION = 2;
 const VERSION_MARKER = `<!-- seeds-onboard-v:${String(ONBOARD_VERSION)} -->`;
 
 const CANDIDATE_FILES = ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"] as const;
@@ -30,6 +30,14 @@ This injects session context: rules, command reference, and workflows.
 - \`sd close <id>\` — Complete work
 - \`sd dep add <id> <depends-on>\` — Add dependency between issues
 - \`sd sync\` — Sync with git (run before pushing)
+
+### Planning
+Use \`sd plan prompt <seed>\` when work is large or ambiguous enough that an LLM benefits from structured decomposition. Submit spawns one child seed per step.
+
+- \`sd plan prompt <seed-id>\` — Emit a structured prompt the LLM fills in
+- \`sd plan submit <seed-id> --plan <file>\` — Validate + spawn child seeds
+- \`sd plan show <pl-id>\` — View sections, children, sub-plans
+- Built-in templates: \`feature\` (default), \`bug\` (auto for type=bug), \`refactor\` (opt-in via \`--template\`)
 
 ### Before You Finish
 1. Close completed issues: \`sd close <id>\`

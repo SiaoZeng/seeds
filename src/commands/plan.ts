@@ -93,6 +93,25 @@ export function register(program: Command): void {
 		});
 
 	plan
+		.command("outcome <pl-id>")
+		.description("Record a plan outcome (storage-only; not a state transition)")
+		.requiredOption("--result <value>", "One of: success, partial, failure")
+		.option("--note <text>", "Optional free-form note")
+		.option("--json", "Output as JSON")
+		.action(async (planId: string, opts: { result: string; note?: string; json?: boolean }) => {
+			await runOutcome(planId, opts.result, opts.note, Boolean(opts.json));
+		});
+
+	plan
+		.command("review <pl-id>")
+		.description("Record a reviewer (informational; not a state transition)")
+		.requiredOption("--by <name>", "Reviewer name")
+		.option("--json", "Output as JSON")
+		.action(async (planId: string, opts: { by: string; json?: boolean }) => {
+			await runReview(planId, opts.by, Boolean(opts.json));
+		});
+
+	plan
 		.command("list")
 		.description("List plans with optional filters")
 		.option("--seed <id>", "Filter by parent seed id")
@@ -886,9 +905,13 @@ async function runShow(planId: string, jsonMode: boolean): Promise<void> {
 		const note = plan.outcomeNote ? ` — ${plan.outcomeNote}` : "";
 		console.log(`Outcome:  ${plan.outcome}${note}`);
 	}
-	if (!plan.reviewedBy) {
+	// PLAN_SPEC.md:404-413 — review hint is purely cosmetic and only relevant
+	// while a plan is awaiting work or in flight.
+	const reviewActionable = plan.status === "approved" || plan.status === "active";
+	if (!plan.reviewedBy && reviewActionable) {
 		console.log(muted("Review suggested (no reviewer recorded yet)"));
-	} else {
+	}
+	if (plan.reviewedBy) {
 		console.log(`Reviewed: ${plan.reviewedBy}`);
 	}
 
@@ -962,6 +985,101 @@ async function runList(filters: ListFilters, jsonMode: boolean): Promise<void> {
 			`${accent.bold(p.id)}  ${muted(p.status)}  rev ${p.revision}  ${muted(p.template)}  ${muted(`seed=${p.seed}`)}  ${muted(`children=${p.children.length}`)}${outcome}  ${muted(p.createdAt)}`,
 		);
 	}
+}
+
+const VALID_OUTCOMES = new Set(["success", "partial", "failure"]);
+
+async function runOutcome(
+	planId: string,
+	result: string,
+	note: string | undefined,
+	jsonMode: boolean,
+): Promise<void> {
+	if (!VALID_OUTCOMES.has(result)) {
+		throw new Error(`--result must be one of: ${[...VALID_OUTCOMES].join(", ")} (got: ${result})`);
+	}
+	const dir = await findSeedsDir();
+	let updatedPlan: Plan | null = null;
+	let openChildren = 0;
+	await withLock(plansPath(dir), async () => {
+		await withLock(issuesPath(dir), async () => {
+			const plans = await readPlans(dir);
+			const idx = plans.findIndex((p) => p.id === planId);
+			const plan = plans[idx];
+			if (!plan) {
+				throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
+			}
+			const issues = await readIssues(dir);
+			openChildren = plan.children.filter((cid) => {
+				const issue = issues.find((i) => i.id === cid);
+				return issue && issue.status !== "closed";
+			}).length;
+			const next: Plan = {
+				...plan,
+				outcome: result as Plan["outcome"],
+				updatedAt: new Date().toISOString(),
+			};
+			if (note !== undefined) next.outcomeNote = note;
+			plans[idx] = next;
+			await writePlans(dir, plans);
+			updatedPlan = next;
+		});
+	});
+
+	if (!updatedPlan) return; // unreachable; throw above
+	const finalPlan: Plan = updatedPlan;
+
+	// PLAN_SPEC.md:431 — open children → warning, not error.
+	if (openChildren > 0) {
+		process.stderr.write(
+			`⚠ plan ${finalPlan.id} has ${openChildren} open child${openChildren === 1 ? "" : "ren"}\n`,
+		);
+	}
+
+	if (jsonMode) {
+		outputJson({
+			success: true,
+			command: "plan outcome",
+			plan_id: finalPlan.id,
+			outcome: finalPlan.outcome,
+			outcomeNote: finalPlan.outcomeNote,
+			open_children: openChildren,
+		});
+		return;
+	}
+	const noteSuffix = finalPlan.outcomeNote ? ` — ${finalPlan.outcomeNote}` : "";
+	printSuccess(`plan ${accent(finalPlan.id)} outcome recorded: ${finalPlan.outcome}${noteSuffix}`);
+}
+
+async function runReview(planId: string, by: string, jsonMode: boolean): Promise<void> {
+	const dir = await findSeedsDir();
+	let updatedPlan: Plan | null = null;
+	await withLock(plansPath(dir), async () => {
+		const plans = await readPlans(dir);
+		const idx = plans.findIndex((p) => p.id === planId);
+		const plan = plans[idx];
+		if (!plan) {
+			throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
+		}
+		const next: Plan = { ...plan, reviewedBy: by, updatedAt: new Date().toISOString() };
+		plans[idx] = next;
+		await writePlans(dir, plans);
+		updatedPlan = next;
+	});
+
+	if (!updatedPlan) return;
+	const finalPlan: Plan = updatedPlan;
+
+	if (jsonMode) {
+		outputJson({
+			success: true,
+			command: "plan review",
+			plan_id: finalPlan.id,
+			reviewedBy: finalPlan.reviewedBy,
+		});
+		return;
+	}
+	printSuccess(`plan ${accent(finalPlan.id)} reviewed by ${finalPlan.reviewedBy}`);
 }
 
 async function runValidate(planId: string, jsonMode: boolean): Promise<void> {

@@ -3,7 +3,12 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { BUILTIN_FEATURE_TEMPLATE, loadPlanTemplates } from "./config.ts";
+import {
+	BUILTIN_BUG_TEMPLATE,
+	BUILTIN_FEATURE_TEMPLATE,
+	BUILTIN_REFACTOR_TEMPLATE,
+	loadPlanTemplates,
+} from "./config.ts";
 
 let dir: string;
 let seedsDir: string;
@@ -23,20 +28,71 @@ function writeConfig(yaml: string): void {
 }
 
 describe("loadPlanTemplates — built-in fallback", () => {
-	test("returns built-in feature when no plan_templates block exists", async () => {
+	test("returns all built-ins when no plan_templates block exists", async () => {
 		writeConfig('project: test\nversion: "1"\n');
 		const templates = await loadPlanTemplates(seedsDir);
-		expect(Object.keys(templates)).toEqual(["feature"]);
+		expect(Object.keys(templates).sort()).toEqual(["bug", "feature", "refactor"]);
 		expect(templates.feature).toEqual(BUILTIN_FEATURE_TEMPLATE);
+		expect(templates.bug).toEqual(BUILTIN_BUG_TEMPLATE);
+		expect(templates.refactor).toEqual(BUILTIN_REFACTOR_TEMPLATE);
 	});
 
-	test("returns built-in feature when config.yaml is missing", async () => {
+	test("returns built-ins when config.yaml is missing", async () => {
 		const templates = await loadPlanTemplates(seedsDir);
 		expect(templates.feature).toEqual(BUILTIN_FEATURE_TEMPLATE);
+		expect(templates.bug).toEqual(BUILTIN_BUG_TEMPLATE);
+		expect(templates.refactor).toEqual(BUILTIN_REFACTOR_TEMPLATE);
 	});
 });
 
 describe("loadPlanTemplates — user templates", () => {
+	test("user-declared bug template overrides the built-in", async () => {
+		writeConfig(
+			[
+				"plan_templates:",
+				"  bug:",
+				"    sections:",
+				"      title:",
+				"        required: true",
+				"        kind: text",
+				'        prompt: "One-liner"',
+				"      steps:",
+				"        required: true",
+				"        kind: steps",
+				"        min: 1",
+				'        prompt: "Steps."',
+			].join("\n"),
+		);
+		const templates = await loadPlanTemplates(seedsDir);
+		const bug = templates.bug;
+		expect(bug?.sections.title).toBeDefined();
+		// Built-in bug-specific sections are gone — full override semantics.
+		expect(bug?.sections.reproduction).toBeUndefined();
+		expect(bug?.sections.root_cause).toBeUndefined();
+	});
+
+	test("user-declared refactor template overrides the built-in", async () => {
+		writeConfig(
+			[
+				"plan_templates:",
+				"  refactor:",
+				"    sections:",
+				"      goal:",
+				"        required: true",
+				"        kind: text",
+				'        prompt: "Goal"',
+				"      steps:",
+				"        required: true",
+				"        kind: steps",
+				"        min: 1",
+				'        prompt: "Steps."',
+			].join("\n"),
+		);
+		const templates = await loadPlanTemplates(seedsDir);
+		expect(templates.refactor?.sections.goal).toBeDefined();
+		expect(templates.refactor?.sections.behavior_invariant).toBeUndefined();
+	});
+
 	test("loads a custom spike template alongside built-in feature", async () => {
 		writeConfig(
 			[
@@ -71,7 +127,7 @@ describe("loadPlanTemplates — user templates", () => {
 			].join("\n"),
 		);
 		const templates = await loadPlanTemplates(seedsDir);
-		expect(Object.keys(templates).sort()).toEqual(["feature", "spike"]);
+		expect(Object.keys(templates).sort()).toEqual(["bug", "feature", "refactor", "spike"]);
 		const spike = templates.spike;
 		expect(spike?.name).toBe("spike");
 		expect(spike?.sections.hypothesis).toEqual({
