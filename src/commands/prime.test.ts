@@ -91,4 +91,16 @@ describe("sd prime", () => {
 		expect(result.success).toBe(true);
 		expect(result.content).toContain("Seeds Workflow Context");
 	});
+
+	test("full content includes plan-aware workflow hints (Phase 5)", async () => {
+		const { stdout } = await run(["prime"], tmpDir);
+		expect(stdout).toContain("Planning");
+		expect(stdout).toContain("sd plan prompt");
+		expect(stdout).toContain("sd plan submit");
+	});
+
+	test("compact content mentions sd plan", async () => {
+		const { stdout } = await run(["prime", "--compact"], tmpDir);
+		expect(stdout).toContain("sd plan");
+	});
 });

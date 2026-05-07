@@ -1,9 +1,10 @@
 #!/usr/bin/env bun
-export const VERSION = "0.3.0";
-
 import chalk from "chalk";
 import { Command, Help } from "commander";
 import { brand, muted, setQuiet } from "./output.ts";
+import { VERSION } from "./version.ts";
+
+export { VERSION };
 
 // Apply quiet mode early so it affects all output during command execution
 const rawArgs = process.argv.slice(2);
@@ -102,6 +103,7 @@ async function registerAll(): Promise<void> {
 		import("./commands/completions.ts"),
 		import("./commands/block.ts"),
 		import("./commands/unblock.ts"),
+		import("./commands/plan.ts"),
 	]);
 
 	for (const mod of mods) {

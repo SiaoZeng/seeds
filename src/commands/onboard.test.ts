@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { VERSION } from "../version.ts";
 
 let tmpDir: string;
 
@@ -122,9 +123,9 @@ describe("sd onboard", () => {
 		expect(rootExists).toBe(false);
 	});
 
-	test("updates outdated section when version changes", async () => {
+	test("upgrades legacy seeds-onboard-v:N marker to schema + version markers", async () => {
 		await initSeeds(tmpDir);
-		// Write a seeds section with an old version marker
+		// Write a seeds section with the legacy version marker
 		const oldContent =
 			"# Project\n\n<!-- seeds:start -->\n## Old Seeds Section\n<!-- seeds-onboard-v:0 -->\nold content\n<!-- seeds:end -->\n";
 		await Bun.write(join(tmpDir, "CLAUDE.md"), oldContent);
@@ -132,9 +133,25 @@ describe("sd onboard", () => {
 		expect(exitCode).toBe(0);
 		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
 		expect(content).toContain("# Project");
-		expect(content).toContain("seeds-onboard-v:1");
+		expect(content).toContain("seeds-onboard-schema:");
+		expect(content).toContain(`seeds-onboard:v${VERSION}`);
 		expect(content).not.toContain("seeds-onboard-v:0");
 		expect(content).not.toContain("Old Seeds Section");
+	});
+
+	test("updates outdated section when schema version changes", async () => {
+		await initSeeds(tmpDir);
+		// Write a seeds section with a stale schema marker
+		const oldContent =
+			"# Project\n\n<!-- seeds:start -->\n## Old Seeds Section\n<!-- seeds-onboard-schema:1 -->\nold content\n<!-- seeds:end -->\n";
+		await Bun.write(join(tmpDir, "CLAUDE.md"), oldContent);
+		const { exitCode } = await run(["onboard"], tmpDir);
+		expect(exitCode).toBe(0);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(content).toContain("# Project");
+		expect(content).not.toContain("seeds-onboard-schema:1");
+		expect(content).not.toContain("Old Seeds Section");
+		expect(content).toContain("Issue Tracking (Seeds)");
 	});
 
 	test("--json output on create", async () => {
@@ -146,10 +163,48 @@ describe("sd onboard", () => {
 		expect(result.action).toBe("created");
 	});
 
-	test("includes version marker in output", async () => {
+	test("includes schema marker in output", async () => {
 		await initSeeds(tmpDir);
 		await run(["onboard"], tmpDir);
 		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
-		expect(content).toContain("seeds-onboard-v:1");
+		expect(content).toContain("seeds-onboard-schema:");
+	});
+
+	test("includes package version in marker and body text", async () => {
+		await initSeeds(tmpDir);
+		await run(["onboard"], tmpDir);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(content).toContain(`<!-- seeds-onboard:v${VERSION} -->`);
+		expect(content).toContain(`Seeds](https://github.com/jayminwest/seeds) v${VERSION}`);
+	});
+
+	test("includes Planning section with full sd plan surface", async () => {
+		await initSeeds(tmpDir);
+		await run(["onboard"], tmpDir);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(content).toContain("### Planning");
+		expect(content).toContain("sd plan templates");
+		expect(content).toContain("sd plan prompt");
+		expect(content).toContain("sd plan submit");
+		expect(content).toContain("sd plan show");
+		expect(content).toContain("sd plan outcome");
+		expect(content).toContain("sd plan review");
+	});
+
+	test("includes sd search and --format flag in quick reference", async () => {
+		await initSeeds(tmpDir);
+		await run(["onboard"], tmpDir);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(content).toContain("sd search");
+		expect(content).toContain("--format");
+	});
+
+	test("re-running onboard does not duplicate the Planning section", async () => {
+		await initSeeds(tmpDir);
+		await run(["onboard"], tmpDir);
+		await run(["onboard"], tmpDir);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		const matches = content.match(/### Planning/g) ?? [];
+		expect(matches.length).toBe(1);
 	});
 });

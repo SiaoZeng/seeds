@@ -1,10 +1,12 @@
 version: '1'
 domains:
-  - docs
-  - orchestration
-  - agents
-  - commands
-  - architecture
+  docs: {}
+  orchestration: {}
+  agents: {}
+  commands: {}
+  architecture: {}
+  seeds: {}
+  onboard: {}
 governance:
   max_entries: 100
   warn_entries: 150

@@ -31,8 +31,19 @@ export function printWarning(msg: string): void {
 	console.log(`${chalk.yellow("!")} ${msg}`);
 }
 
-export function formatIssueOneLine(issue: Issue): string {
-	const isBlocked = (issue.blockedBy?.length ?? 0) > 0;
+// An issue is *effectively* blocked when at least one entry in `blockedBy`
+// references a still-open issue. When `closedBlockerIds` is omitted, fall back
+// to the legacy length-based heuristic for callers that haven't threaded the
+// set through yet.
+function isEffectivelyBlocked(issue: Issue, closedBlockerIds?: Set<string>): boolean {
+	const blockers = issue.blockedBy ?? [];
+	if (blockers.length === 0) return false;
+	if (!closedBlockerIds) return true;
+	return blockers.some((bid) => !closedBlockerIds.has(bid));
+}
+
+export function formatIssueOneLine(issue: Issue, closedBlockerIds?: Set<string>): string {
+	const isBlocked = isEffectivelyBlocked(issue, closedBlockerIds);
 	const statusIcon =
 		issue.status === "closed"
 			? muted("x")
@@ -48,16 +59,16 @@ export function formatIssueOneLine(issue: Issue): string {
 	return `${statusIcon} ${accent.bold(issue.id)} · ${issue.title}   ${muted(`[${priorityLabel} · ${issue.type}]`)}${assignee}${blocked}${labelStr}`;
 }
 
-export function formatIssueOneLineCompact(issue: Issue): string {
+export function formatIssueOneLineCompact(issue: Issue, closedBlockerIds?: Set<string>): string {
 	const priorityLabel = PRIORITY_LABELS[issue.priority] ?? String(issue.priority);
-	const isBlocked = (issue.blockedBy?.length ?? 0) > 0;
+	const isBlocked = isEffectivelyBlocked(issue, closedBlockerIds);
 	const status = isBlocked ? "blocked" : issue.status;
 	return `${issue.id} ${priorityLabel} ${status} ${issue.title}`;
 }
 
-export function printIssueOneLine(issue: Issue): void {
+export function printIssueOneLine(issue: Issue, closedBlockerIds?: Set<string>): void {
 	if (_quiet) return;
-	console.log(formatIssueOneLine(issue));
+	console.log(formatIssueOneLine(issue, closedBlockerIds));
 }
 
 export function formatIssueFull(issue: Issue): string {

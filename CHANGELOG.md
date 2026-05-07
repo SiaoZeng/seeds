@@ -7,6 +7,32 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-05-06
+
+### Added
+- `sd plan` command tree — structured planning facilitation that decomposes a seed into child seeds via an LLM-driven walkthrough. Designed for work that's large or ambiguous enough to benefit from upfront decomposition; for small, well-scoped tasks just `sd create` directly. Full design in [PLAN_SPEC.md](./PLAN_SPEC.md).
+  - `sd plan templates` — list available plan templates
+  - `sd plan prompt <seed-id> [--template <name>] [--domain <name>]` — emit structured `plan_request` JSON the LLM fills out; default template inferred from seed type. `instructions` and `--help` document the submit reply shape so the prompt → submit transformation is explicit. `prior_art` is enriched from mulch (`approach` ↔ pattern+decision, `risks` ↔ failure, `acceptance` ↔ guide) when mulch is on PATH.
+  - `sd plan submit <seed-id> --plan <file|->` — validate via AJV + structural `steps[].blocks` index check, spawn one child seed per step with `blockedBy` id remap, append the plan row to `.seeds/plans.jsonl`, and update the parent seed (`plan_id` back-pointer + `blockedBy = [children]`). `-` reads from stdin. Validation failures emit a partial-state diff JSON to stderr. `--overwrite` replaces an existing non-draft plan, matches steps by title, preserves child IDs, and prints obsolete-child close suggestions to stderr (never auto-closes). `--record-decision` writes the approach to mulch as a decision record after success (best-effort, never rolls back the plan). `--domain` forces the mulch domain.
+  - `sd plan show <pl-id>` — display sections, child summaries, status, and a "review suggested" hint when status is `approved`/`active` and no reviewer is recorded. Recurses through nested sub-plans up to `max_plan_depth` (default 3, configurable).
+  - `sd plan list [--seed --status --outcome --template]` — query plans with combinable filters; default sort `createdAt` desc.
+  - `sd plan validate <pl-id>` — re-run validation against the current template definition.
+  - `sd plan outcome <pl-id> --result success|partial|failure [--note <text>]` — record a plan outcome (storage-only; never gates child progress).
+  - `sd plan review <pl-id> --by <name>` — record a reviewer (informational; not a state transition).
+- **Config-driven plan templates.** Custom templates under `plan_templates:` in `.seeds/config.yaml` override the built-ins. Built-in templates: `feature` (default for `task`/`feature`/`epic`; sections: `context`, `approach`, `alternatives`, `steps`, `risks`, `acceptance`), `bug` (default for `bug`; adds `reproduction`, `root_cause`), `refactor` (opt-in via `--template refactor`; adds `behavior_invariant`).
+- **Plan lifecycle auto-transitions.** `draft` → `approved` → `active` → `done` driven by child seed status changes (hooked from `update.ts` and `close.ts` under outer plans-lock + inner issues-lock); `done` → `active` reopen path supported. `Plan.revision` increments on `--overwrite`.
+- **Nested sub-plans.** A template step can declare `plan_template: <name>` to spawn a child seed that requires its own sub-plan. The child gets `requires_plan: true` and is hidden from `sd ready` until its plan reaches `approved+`. `sd plan prompt` on the spawned child inherits the parent step's `plan_template` unless `--template` overrides. Submit-time validation rejects unknown `plan_template` names.
+- `Plan` type and plan storage layer (`readPlans`/`writePlans`/`appendPlan`/`plansPath`) mirroring the issue/template helpers and lock model. `.seeds/plans.jsonl` is created on `sd init` and added to `.gitattributes` with `merge=union`.
+- `Issue.plan_id`, `Issue.plan_step_index`, `Issue.requires_plan` (additive optional fields; existing rows remain valid).
+- Plan-awareness in `sd ready`, `sd show`, and `sd list`: ready surfaces seeds whose plan is in `draft` even if otherwise blocked, and excludes seeds with `requires_plan` until their sub-plan is approved+; show inlines child seeds for approved/active/done plans; list adds a `[plan <status>]` indicator. `--json` parity (`plan_status`, `plan_children`).
+- `src/validation.ts` AJV-based validation foundation (sole AJV-importing module): `compileSchema` returns a `ValidatorFn`; `formatErrors` maps AJV `ErrorObject` to the documented `PartialStateDiff` shape.
+- Extended in-tree YAML parser (`src/yaml.ts`) supporting nested maps, block sequences, inline flow maps/seqs, and typed scalars — keeps the minimal-runtime-deps posture (no new YAML dep).
+- `sd onboard` snippet refresh — added `sd search`, the global `--format` flag, and the full `sd plan` surface (templates, prompt, submit, show, validate, list, outcome, review). Snippet version bumped to `v:3` so existing CLAUDE.md installs auto-update via the marker.
+- `sd prime` includes plan-aware quick reference.
+
+### Fixed
+- `sd list` / `sd ready` / `sd blocked` / `sd show` (compact) / `sd search` / `sd dep` / `sd tpl` no longer render `[blocked]` when all of an issue's blockers are closed. Formatters now accept an optional `closedBlockerIds` set; callers compute it once from the unfiltered issue list and thread it through.
+
 ## [0.3.0] - 2026-05-04
 
 ### Added
@@ -123,7 +149,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/jayminwest/seeds/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jayminwest/seeds/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/jayminwest/seeds/compare/v0.2.4...v0.2.5
 [0.2.4]: https://github.com/jayminwest/seeds/compare/v0.2.3...v0.2.4

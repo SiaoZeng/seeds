@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { parseYaml, stringifyYaml } from "./yaml";
+import { parseYaml, stringifyYaml, type YamlValue } from "./yaml";
 
-describe("parseYaml", () => {
+describe("parseYaml — flat (legacy)", () => {
 	test("parses simple key-value pairs", () => {
 		const result = parseYaml('project: overstory\nversion: "1"');
 		expect(result.project).toBe("overstory");
@@ -24,7 +24,7 @@ describe("parseYaml", () => {
 	});
 
 	test("ignores blank lines", () => {
-		const result = parseYaml("project: seeds\n\nversion: 1");
+		const result = parseYaml('project: seeds\n\nversion: "1"');
 		expect(result.project).toBe("seeds");
 		expect(result.version).toBe("1");
 	});
@@ -57,6 +57,185 @@ describe("parseYaml", () => {
 	});
 });
 
+describe("parseYaml — typed scalars", () => {
+	test("parses booleans", () => {
+		const result = parseYaml("flag: true\nother: false");
+		expect(result.flag).toBe(true);
+		expect(result.other).toBe(false);
+	});
+
+	test("parses integers", () => {
+		const result = parseYaml("count: 42\nneg: -7");
+		expect(result.count).toBe(42);
+		expect(result.neg).toBe(-7);
+	});
+
+	test("parses floats", () => {
+		const result = parseYaml("ratio: 3.14");
+		expect(result.ratio).toBe(3.14);
+	});
+
+	test("parses null and tilde", () => {
+		const result = parseYaml("a: null\nb: ~");
+		expect(result.a).toBeNull();
+		expect(result.b).toBeNull();
+	});
+
+	test("quoted digit-string stays a string", () => {
+		const result = parseYaml('version: "1"');
+		expect(result.version).toBe("1");
+		expect(typeof result.version).toBe("string");
+	});
+
+	test("strips trailing comments outside quotes", () => {
+		const result = parseYaml('name: foo  # inline comment\nv: "x # not comment"');
+		expect(result.name).toBe("foo");
+		expect(result.v).toBe("x # not comment");
+	});
+});
+
+describe("parseYaml — nested maps", () => {
+	test("two-level nested map", () => {
+		const result = parseYaml(["a:", "  b: 1", "  c: 2"].join("\n"));
+		expect(result.a).toEqual({ b: 1, c: 2 });
+	});
+
+	test("three-level nested map", () => {
+		const result = parseYaml(
+			["plan_templates:", "  feature:", "    sections:", "      context: hi"].join("\n"),
+		);
+		expect(result).toEqual({
+			plan_templates: { feature: { sections: { context: "hi" } } },
+		});
+	});
+
+	test("handles mixed indentation depths within siblings", () => {
+		const result = parseYaml(["a:", "  x: 1", "b:", "  y: 2"].join("\n"));
+		expect(result).toEqual({ a: { x: 1 }, b: { y: 2 } });
+	});
+});
+
+describe("parseYaml — sequences", () => {
+	test("block sequence of strings", () => {
+		const result = parseYaml(["items:", "  - a", "  - b", "  - c"].join("\n"));
+		expect(result.items).toEqual(["a", "b", "c"]);
+	});
+
+	test("inline flow sequence", () => {
+		const result = parseYaml("items: [a, b, c]");
+		expect(result.items).toEqual(["a", "b", "c"]);
+	});
+
+	test("flow sequence with quoted entries", () => {
+		const result = parseYaml('items: ["foo, bar", baz]');
+		expect(result.items).toEqual(["foo, bar", "baz"]);
+	});
+
+	test("empty inline sequence", () => {
+		const result = parseYaml("items: []");
+		expect(result.items).toEqual([]);
+	});
+
+	test("block sequence of typed scalars", () => {
+		const result = parseYaml(["nums:", "  - 1", "  - 2", "  - true"].join("\n"));
+		expect(result.nums).toEqual([1, 2, true]);
+	});
+
+	test("block sequence of objects (multi-key)", () => {
+		const yaml = [
+			"alternatives:",
+			"  - name: Alpha",
+			"    rejected_because: too slow",
+			"  - name: Beta",
+			"    rejected_because: too risky",
+		].join("\n");
+		const result = parseYaml(yaml);
+		expect(result.alternatives).toEqual([
+			{ name: "Alpha", rejected_because: "too slow" },
+			{ name: "Beta", rejected_because: "too risky" },
+		]);
+	});
+});
+
+describe("parseYaml — flow maps", () => {
+	test("inline flow map", () => {
+		const result = parseYaml("item: { kind: text }");
+		expect(result.item).toEqual({ kind: "text" });
+	});
+
+	test("inline flow map with multiple entries", () => {
+		const result = parseYaml("item: { name: foo, count: 3, ok: true }");
+		expect(result.item).toEqual({ name: "foo", count: 3, ok: true });
+	});
+
+	test("nested flow maps inside block map", () => {
+		const yaml = ["item:", "  name: { kind: text }", "  rejected_because: { kind: text }"].join(
+			"\n",
+		);
+		const result = parseYaml(yaml);
+		expect(result.item).toEqual({
+			name: { kind: "text" },
+			rejected_because: { kind: "text" },
+		});
+	});
+
+	test("empty flow map", () => {
+		const result = parseYaml("item: {}");
+		expect(result.item).toEqual({});
+	});
+});
+
+describe("parseYaml — full plan_templates block (PLAN_SPEC.md:36-78)", () => {
+	test("round-trips the full feature template", () => {
+		const yaml = [
+			"project: overstory",
+			'version: "1"',
+			"",
+			"plan_templates:",
+			"  feature:",
+			"    sections:",
+			"      context:",
+			"        required: true",
+			"        kind: text",
+			"        min_length: 50",
+			'        prompt: "Why does this work need to happen?"',
+			"      alternatives:",
+			"        kind: list",
+			"        item:",
+			"          name: { kind: text }",
+			"          rejected_because: { kind: text }",
+			"      steps:",
+			"        kind: steps",
+			"        min: 2",
+			"      acceptance:",
+			"        required: true",
+			"        kind: list",
+			"        item: text",
+			"        min: 1",
+		].join("\n");
+		const result = parseYaml(yaml);
+		expect(result.project).toBe("overstory");
+		expect(result.version).toBe("1");
+		const tpl = (result.plan_templates as Record<string, YamlValue>).feature as Record<
+			string,
+			YamlValue
+		>;
+		const sections = tpl.sections as Record<string, YamlValue>;
+		expect((sections.context as Record<string, YamlValue>).required).toBe(true);
+		expect((sections.context as Record<string, YamlValue>).min_length).toBe(50);
+		expect((sections.context as Record<string, YamlValue>).prompt).toBe(
+			"Why does this work need to happen?",
+		);
+		expect((sections.alternatives as Record<string, YamlValue>).item).toEqual({
+			name: { kind: "text" },
+			rejected_because: { kind: "text" },
+		});
+		expect((sections.steps as Record<string, YamlValue>).kind).toBe("steps");
+		expect((sections.steps as Record<string, YamlValue>).min).toBe(2);
+		expect((sections.acceptance as Record<string, YamlValue>).item).toBe("text");
+	});
+});
+
 describe("stringifyYaml", () => {
 	test("serializes simple key-value pairs", () => {
 		const yaml = stringifyYaml({ project: "seeds", version: "1" });
@@ -75,5 +254,33 @@ describe("stringifyYaml", () => {
 	test("produces newline-terminated output", () => {
 		const yaml = stringifyYaml({ key: "value" });
 		expect(yaml.endsWith("\n")).toBe(true);
+	});
+
+	test("round-trips nested maps", () => {
+		const original: Record<string, YamlValue> = {
+			project: "seeds",
+			plan_templates: {
+				feature: {
+					sections: {
+						context: { required: true, kind: "text", min_length: 50 },
+					},
+				},
+			},
+		};
+		const yaml = stringifyYaml(original);
+		const parsed = parseYaml(yaml);
+		expect(parsed).toEqual(original);
+	});
+
+	test("round-trips sequences of objects", () => {
+		const original: Record<string, YamlValue> = {
+			alternatives: [
+				{ name: "A", rejected_because: "slow" },
+				{ name: "B", rejected_because: "risky" },
+			],
+		};
+		const yaml = stringifyYaml(original);
+		const parsed = parseYaml(yaml);
+		expect(parsed).toEqual(original);
 	});
 });

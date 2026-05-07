@@ -8,9 +8,15 @@ import {
 	outputJson,
 	printIssueOneLine,
 } from "../output.ts";
+import {
+	isPlanDraftBlocking,
+	loadPlanContext,
+	planForIssue,
+	planLineSuffix,
+} from "../plan-context.ts";
 import { isSortMode, sortIssues, VALID_SORT_MODES } from "../sort.ts";
 import { readIssues } from "../store.ts";
-import type { Issue } from "../types.ts";
+import type { Issue, Plan } from "../types.ts";
 
 function parseArgs(args: string[]): Record<string, string | boolean> {
 	const flags: Record<string, string | boolean> = {};
@@ -62,11 +68,24 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	const dir = seedsDir ?? (await findSeedsDir());
 	const issues = await readIssues(dir);
+	const planCtx = await loadPlanContext(dir);
 
 	const closedIds = new Set(issues.filter((i: Issue) => i.status === "closed").map((i) => i.id));
 
 	let ready = issues.filter((i: Issue) => {
 		if (i.status !== "open") return false;
+		// PLAN_SPEC.md:342 — seeds with requires_plan are excluded until their
+		// own sub-plan reaches `approved`. Lookup by seed-id since plan_id is
+		// not set on the spawned child until its sub-plan submit succeeds.
+		if (i.requires_plan === true) {
+			const sub = planCtx.plansBySeed.get(i.id);
+			if (!sub || sub.status === "draft") return false;
+			// approved/active/done: fall through to standard blocker check.
+		} else if (isPlanDraftBlocking(planForIssue(planCtx, i))) {
+			// Planning is the highest-priority work: surface seeds with a draft
+			// plan even if they would otherwise be blocked. (PLAN_SPEC.md:154)
+			return true;
+		}
 		const blockers = i.blockedBy ?? [];
 		return blockers.every((bid) => closedIds.has(bid));
 	});
@@ -88,22 +107,37 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	ready = ready.slice(0, limit);
 
+	const annotate = (issue: Issue): { issue: Issue; plan?: Plan } => ({
+		issue,
+		plan: planForIssue(planCtx, issue),
+	});
+
 	switch (fmt.mode) {
-		case "json":
-			outputJson({ success: true, command: "ready", issues: ready, count: ready.length });
+		case "json": {
+			const issuesWithPlan = ready.map((i) => issueJsonWithPlan(i, planForIssue(planCtx, i)));
+			outputJson({
+				success: true,
+				command: "ready",
+				issues: issuesWithPlan,
+				count: ready.length,
+			});
 			return;
+		}
 		case "ids":
 			for (const issue of ready) console.log(issue.id);
 			return;
 		case "compact":
-			for (const issue of ready) console.log(formatIssueOneLineCompact(issue));
+			for (const issue of ready) console.log(formatIssueOneLineCompact(issue, closedIds));
 			return;
 		case "plain":
 			if (ready.length === 0) {
 				console.log("No ready issues.");
 				return;
 			}
-			for (const issue of ready) console.log(stripAnsi(formatIssueOneLine(issue)));
+			for (const issue of ready) {
+				const { plan } = annotate(issue);
+				console.log(stripAnsi(formatIssueOneLine(issue, closedIds) + planLineSuffix(plan)));
+			}
 			console.log(`\n${ready.length} ready issue(s)`);
 			return;
 		default:
@@ -111,10 +145,29 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				console.log("No ready issues.");
 				return;
 			}
-			for (const issue of ready) printIssueOneLine(issue);
+			for (const issue of ready) {
+				const { plan } = annotate(issue);
+				const suffix = planLineSuffix(plan);
+				if (suffix) {
+					process.stdout.write(`${formatIssueOneLine(issue, closedIds)}${suffix}\n`);
+				} else {
+					printIssueOneLine(issue, closedIds);
+				}
+			}
 			console.log(`\n${ready.length} ready issue(s)`);
 			return;
 	}
+}
+
+function issueJsonWithPlan(
+	issue: Issue,
+	plan: Plan | undefined,
+): Issue & {
+	plan_status?: string;
+	plan_children?: string[];
+} {
+	if (!plan) return issue;
+	return { ...issue, plan_status: plan.status, plan_children: plan.children };
 }
 
 export function register(program: Command): void {

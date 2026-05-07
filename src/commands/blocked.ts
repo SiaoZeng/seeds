@@ -41,14 +41,14 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			for (const issue of blocked) console.log(issue.id);
 			return;
 		case "compact":
-			for (const issue of blocked) console.log(formatIssueOneLineCompact(issue));
+			for (const issue of blocked) console.log(formatIssueOneLineCompact(issue, closedIds));
 			return;
 		case "plain":
 			if (blocked.length === 0) {
 				console.log("No blocked issues.");
 				return;
 			}
-			for (const issue of blocked) console.log(stripAnsi(formatIssueOneLine(issue)));
+			for (const issue of blocked) console.log(stripAnsi(formatIssueOneLine(issue, closedIds)));
 			console.log(`\n${blocked.length} blocked issue(s)`);
 			return;
 		default:
@@ -56,7 +56,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				console.log("No blocked issues.");
 				return;
 			}
-			for (const issue of blocked) printIssueOneLine(issue);
+			for (const issue of blocked) printIssueOneLine(issue, closedIds);
 			console.log(`\n${blocked.length} blocked issue(s)`);
 			return;
 	}
