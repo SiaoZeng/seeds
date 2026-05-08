@@ -84,10 +84,11 @@ function validPlanFor(): {
 			approach: "Hardcoded TS template + AJV schema, mirroring mulch's custom_types.",
 			alternatives: [],
 			steps: [
-				{ title: "Step A", type: "task", priority: 2, blocks: [] },
-				{ title: "Step B", type: "task", priority: 2, blocks: [0] },
-				{ title: "Step C", type: "task", priority: 2, blocks: [] },
-				{ title: "Step D", type: "task", priority: 2, blocks: [2] },
+				// Forward semantics: step i with blocks: [j] means step i blocks step j.
+				{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+				{ title: "Step B", type: "task", priority: 2, blocks: [] },
+				{ title: "Step C", type: "task", priority: 2, blocks: [3] }, // C blocks D
+				{ title: "Step D", type: "task", priority: 2, blocks: [] },
 			],
 			risks: [],
 			acceptance: ["End-to-end works"],
@@ -255,15 +256,20 @@ describe("sd plan submit", () => {
 		expect(child(aa01)?.plan_id).toBe(result.plan_id);
 		expect(child(aa01)?.plan_step_index).toBe(0);
 		expect(child(aa01)?.blockedBy ?? []).toEqual([]);
+		// Forward semantics: A's blocks=[1] → A.blocks contains B (and the parent seed).
+		expect(child(aa01)?.blocks).toEqual([aa02 ?? "", seedId]);
 
 		expect(child(aa02)?.plan_step_index).toBe(1);
 		expect(child(aa02)?.blockedBy).toEqual([aa01 ?? ""]);
+		expect(child(aa02)?.blocks).toEqual([seedId]);
 
 		expect(child(aa03)?.plan_step_index).toBe(2);
 		expect(child(aa03)?.blockedBy ?? []).toEqual([]);
+		expect(child(aa03)?.blocks).toEqual([aa04 ?? "", seedId]);
 
 		expect(child(aa04)?.plan_step_index).toBe(3);
 		expect(child(aa04)?.blockedBy).toEqual([aa03 ?? ""]);
+		expect(child(aa04)?.blocks).toEqual([seedId]);
 
 		// Parent: plan_id back-pointer + blockedBy includes all children
 		const parent = child(seedId);
@@ -518,8 +524,8 @@ describe("sd plan submit --overwrite", () => {
 		// Drop the last two steps in the new plan
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [] },
-			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
+			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+			{ title: "Step B", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);
 		const overwriteResult = await run(
@@ -558,9 +564,9 @@ describe("sd plan submit --overwrite", () => {
 
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [] },
-			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
-			{ title: "Brand New Step", type: "task", priority: 2, blocks: [1] },
+			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+			{ title: "Step B", type: "task", priority: 2, blocks: [2] }, // B blocks BNS
+			{ title: "Brand New Step", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);
 		const overwriteResult = await run(
@@ -585,11 +591,16 @@ describe("sd plan submit --overwrite", () => {
 			title: string;
 			plan_id?: string;
 			blockedBy?: string[];
+			blocks?: string[];
 		}>(join(tmpDir, ".seeds/issues.jsonl"));
 		const spawned = newIssue.find((i) => i.id === newChildId);
 		expect(spawned?.title).toBe("Brand New Step");
 		expect(spawned?.plan_id).toBe(firstResult.plan_id);
+		// Forward semantics: B blocks BNS → BNS.blockedBy contains B's id.
 		expect(spawned?.blockedBy).toEqual([firstResult.children[1] ?? ""]);
+		// Matched B should also have its .blocks updated to include BNS.
+		const matchedB = newIssue.find((i) => i.id === firstResult.children[1]);
+		expect(matchedB?.blocks ?? []).toContain(newChildId);
 	});
 
 	test("parent.blockedBy drops obsolete children and reflects the new plan", async () => {
@@ -601,8 +612,8 @@ describe("sd plan submit --overwrite", () => {
 		// New plan keeps Step A & Step B (matched by title), drops C and D.
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [] },
-			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
+			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+			{ title: "Step B", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);
 		const overwriteResult = await run(
@@ -707,8 +718,8 @@ describe("sd plan show: structured list rendering (seeds-7d17)", () => {
 				approach: "Render structured steps in a human-readable way.",
 				alternatives: [],
 				steps: [
+					{ title: "Blocking step", type: "task", priority: 2, blocks: [1] },
 					{ title: "Plain step", type: "task", priority: 2, blocks: [] },
-					{ title: "Blocked step", type: "task", priority: 2, blocks: [0] },
 					{
 						title: "Pre-planned step",
 						type: "task",
@@ -725,13 +736,13 @@ describe("sd plan show: structured list rendering (seeds-7d17)", () => {
 		const planId = await submitPlan(plan);
 		const { stdout, exitCode } = await run(["plan", "show", planId], tmpDir);
 		expect(exitCode).toBe(0);
-		expect(stdout).toContain("1. Plain step");
-		expect(stdout).toContain("2. Blocked step");
-		expect(stdout).toContain("blocks: 1");
+		expect(stdout).toContain("1. Blocking step");
+		expect(stdout).toContain("2. Plain step");
+		expect(stdout).toContain("blocks: 2");
 		expect(stdout).toContain("3. Pre-planned step");
 		expect(stdout).toContain("requires_plan: true");
 		expect(stdout).toContain("plan_template: feature");
-		expect(stdout).not.toContain('{"title":"Plain step"');
+		expect(stdout).not.toContain('{"title":"Blocking step"');
 		expect(stdout).not.toContain('"requires_plan":true');
 	});
 
@@ -868,8 +879,15 @@ describe("sd plan show: recursive nesting (Phase 4 / PLAN_SPEC.md:340, 425, 430)
 	function planWithSubPlanStep(): { template: string; sections: Record<string, unknown> } {
 		const base = validPlanFor();
 		base.sections.steps = [
-			{ title: "Sub-plan epic", type: "epic", priority: 1, plan_template: "feature" },
-			{ title: "Plain task", type: "task", priority: 2, blocks: [0] },
+			// Forward semantics: epic blocks the plain task (epic must finish first).
+			{
+				title: "Sub-plan epic",
+				type: "epic",
+				priority: 1,
+				plan_template: "feature",
+				blocks: [1],
+			},
+			{ title: "Plain task", type: "task", priority: 2, blocks: [] },
 		];
 		return base;
 	}
@@ -1112,8 +1130,15 @@ describe("sd plan submit: step.plan_template (Phase 4 / PLAN_SPEC.md:329-342)", 
 	function planWithSubPlanStep(): { template: string; sections: Record<string, unknown> } {
 		const base = validPlanFor();
 		base.sections.steps = [
-			{ title: "OAuth integration", type: "epic", priority: 1, plan_template: "feature" },
-			{ title: "Wire UI", type: "task", priority: 2, blocks: [0] },
+			// Forward semantics: OAuth integration epic blocks Wire UI.
+			{
+				title: "OAuth integration",
+				type: "epic",
+				priority: 1,
+				plan_template: "feature",
+				blocks: [1],
+			},
+			{ title: "Wire UI", type: "task", priority: 2, blocks: [] },
 		];
 		return base;
 	}
@@ -1595,8 +1620,8 @@ function validBugPlan(): { template: string; sections: Record<string, unknown> }
 			root_cause: VALID_ROOT_CAUSE,
 			approach: "Normalize both sides to lowercase before comparing.",
 			steps: [
-				{ title: "Add lowercasing helper", type: "task", priority: 2, blocks: [] },
-				{ title: "Wire through caller", type: "task", priority: 2, blocks: [0] },
+				{ title: "Add lowercasing helper", type: "task", priority: 2, blocks: [1] },
+				{ title: "Wire through caller", type: "task", priority: 2, blocks: [] },
 			],
 			acceptance: ["Regression test passes on Linux"],
 		},
@@ -1917,9 +1942,9 @@ describe("sd plan submit: child backref block (seeds-76af)", () => {
 
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [] },
-			{ title: "Step B", type: "task", priority: 2, blocks: [0] },
-			{ title: "Brand New Step", type: "task", priority: 2, blocks: [1] },
+			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+			{ title: "Step B", type: "task", priority: 2, blocks: [2] }, // B blocks BNS
+			{ title: "Brand New Step", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);
 		const overwrite = await run(

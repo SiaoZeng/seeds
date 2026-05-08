@@ -254,7 +254,7 @@ The LLM never has to re-run `sd plan prompt`; the failure response carries enoug
 }
 ```
 
-The `blocks: [1]` syntax in `steps` references step indices; on submit, indices are translated into spawned-seed IDs and written to each child's `blockedBy` field.
+The `blocks: [1]` syntax in `steps` references step indices and uses forward semantics: step 0 with `blocks: [1]` means step 0 *blocks* step 1 (step 1 depends on step 0 finishing first). On submit, indices are translated into spawned-seed IDs: each child gets the targets in its `blocks` field, and each target gets the blocking step's ID appended to its `blockedBy` field. Leave `blocks: []` for steps nothing depends on.
 
 ## Plan Templates (Customization)
 

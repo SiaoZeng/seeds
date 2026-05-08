@@ -40,7 +40,7 @@ This injects session context: rules, command reference, and workflows. Pass \`--
 - \`sd sync\` — Sync with git (run before pushing)
 
 ### Planning
-Use \`sd plan\` when work is large or ambiguous enough that an LLM benefits from structured decomposition. Submit spawns one child seed per step and wires \`step.blocks\` into \`blockedBy\` dependencies.
+Use \`sd plan\` when work is large or ambiguous enough that an LLM benefits from structured decomposition. Submit spawns one child seed per step; \`step.blocks\` uses forward semantics (step i with \`blocks: [j]\` means step i blocks step j, and step j gets step i's id in its \`blockedBy\`).
 
 - \`sd plan templates\` — List built-ins (\`feature\`, \`bug\`, \`refactor\`) plus custom templates
 - \`sd plan prompt <seed-id>\` — Emit a structured prompt the LLM fills in

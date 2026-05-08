@@ -99,7 +99,7 @@ function fullContent(): string {
 - \`sd doctor\` — Check for data integrity issues
 
 ### Planning
-Use \`sd plan\` when work is large or ambiguous enough to benefit from structured decomposition. The plan spawns one child seed per step and wires dependencies via \`step.blocks\`. For small, well-scoped tasks, just \`sd create\` directly.
+Use \`sd plan\` when work is large or ambiguous enough to benefit from structured decomposition. The plan spawns one child seed per step; \`step.blocks\` uses forward semantics (step i with \`blocks: [j]\` means step i blocks step j). For small, well-scoped tasks, just \`sd create\` directly.
 
 - \`sd plan templates\` — List built-in templates (\`feature\`, \`bug\`, \`refactor\`) plus custom ones
 - \`sd plan prompt <seed-id>\` — Emit prompt JSON for the LLM to fill

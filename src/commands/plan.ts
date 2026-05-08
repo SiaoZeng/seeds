@@ -214,7 +214,7 @@ interface PlanRequest {
 }
 
 const INSTRUCTIONS =
-	'Fill every section. Required fields are marked. Use prior_art entries to ground decisions. Reply with JSON shaped { "template": "<name>", "sections": { "<section-name>": <value>, ... } } — drop the plan_request wrapper, and sections in your reply is an object keyed by name (not the array of section metadata above).';
+	'Fill every section. Required fields are marked. Use prior_art entries to ground decisions. Reply with JSON shaped { "template": "<name>", "sections": { "<section-name>": <value>, ... } } — drop the plan_request wrapper, and sections in your reply is an object keyed by name (not the array of section metadata above). In each step, `blocks` lists step indices that this step blocks (i.e. that depend on this step finishing first); leave empty if nothing depends on it.';
 
 function buildPlanRequest(
 	seedId: string,
@@ -539,14 +539,17 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				} else {
 					issue.plan_id = planId;
 				}
-				const deps = step.blocks ?? [];
-				if (deps.length > 0) {
-					const blockedByIds: string[] = [];
-					for (const j of deps) {
+				// PLAN_SPEC.md:248-257 — forward semantics: step i with
+				// blocks=[j] means "this step blocks step j" (step j depends
+				// on step i). Translate to child i.blocks containing child j.
+				const targets = step.blocks ?? [];
+				if (targets.length > 0) {
+					const blocksIds: string[] = [];
+					for (const j of targets) {
 						const target = newChildIds[j];
-						if (target) blockedByIds.push(target);
+						if (target) blocksIds.push(target);
 					}
-					if (blockedByIds.length > 0) issue.blockedBy = blockedByIds;
+					if (blocksIds.length > 0) issue.blocks = blocksIds;
 				}
 				return issue;
 			});
@@ -557,9 +560,9 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				const childId = newChildIds[i];
 				if (!childId) continue;
 				for (const j of step.blocks ?? []) {
-					const blocker = newIssues[j];
-					if (!blocker) continue;
-					blocker.blocks = [...(blocker.blocks ?? []), childId];
+					const target = newIssues[j];
+					if (!target) continue;
+					target.blockedBy = [...(target.blockedBy ?? []), childId];
 				}
 			}
 
@@ -803,15 +806,67 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		} else {
 			issue.plan_id = existingPlan.id;
 		}
-		const deps = step.blocks ?? [];
-		const blockedByIds: string[] = [];
-		for (const j of deps) {
-			const target = finalChildIds[j];
-			if (target) blockedByIds.push(target);
-		}
-		if (blockedByIds.length > 0) issue.blockedBy = blockedByIds;
+		// PLAN_SPEC.md:248-257 — forward semantics: step.blocks=[j] means
+		// this step blocks step j. Both directions are wired below in a
+		// unified pass that handles new and matched children alike.
 		issue.blocks = [seed.id];
 		newIssues.push(issue);
+	}
+
+	// Wire step.blocks edges in both directions:
+	//   source.blocks       gains targetId
+	//   target.blockedBy    gains sourceId
+	// Source and target may each be freshly spawned (in newIssues) or matched
+	// (in allIssues). Dedupe so edges already present from the prior revision
+	// don't compound; we don't strip stale edges (full reconciliation is out
+	// of scope).
+	const addToList = (
+		list: string[] | undefined,
+		id: string,
+	): { list: string[]; changed: boolean } => {
+		const arr = list ?? [];
+		if (arr.includes(id)) return { list: arr, changed: false };
+		return { list: [...arr, id], changed: true };
+	};
+	const updateMatched = (
+		targetId: string,
+		field: "blocks" | "blockedBy",
+		valueId: string,
+	): boolean => {
+		const idx = allIssues.findIndex((iss) => iss.id === targetId);
+		if (idx < 0) return false;
+		const matched = allIssues[idx];
+		if (!matched) return false;
+		const result = addToList(matched[field], valueId);
+		if (!result.changed) return false;
+		allIssues[idx] = { ...matched, [field]: result.list, updatedAt: now };
+		return true;
+	};
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		if (!step) continue;
+		const sourceId = finalChildIds[i];
+		if (!sourceId) continue;
+		for (const j of step.blocks ?? []) {
+			const targetId = finalChildIds[j];
+			if (!targetId) continue;
+			// Forward edge on source.
+			const newSource = newIssues.find((ni) => ni.id === sourceId);
+			if (newSource) {
+				const r = addToList(newSource.blocks, targetId);
+				if (r.changed) newSource.blocks = r.list;
+			} else {
+				updateMatched(sourceId, "blocks", targetId);
+			}
+			// Reverse edge on target.
+			const newTarget = newIssues.find((ni) => ni.id === targetId);
+			if (newTarget) {
+				const r = addToList(newTarget.blockedBy, sourceId);
+				if (r.changed) newTarget.blockedBy = r.list;
+			} else {
+				updateMatched(targetId, "blockedBy", sourceId);
+			}
+		}
 	}
 
 	// Obsolete children = old plan children with no matching step in new plan.
