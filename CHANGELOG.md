@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-05-08
+
+### Added
+- `sd plan show|validate|outcome|review` now accept a seed ID in addition to a `pl-*` plan ID — resolves via `seed.plan_id`, removing the round-trip through `sd plan list` when an agent already has the seed in hand. (seeds-51bc)
+- `sd plan submit` prints a Next-action block to stderr on success (`sd plan show`, `sd ready`, conditionally `sd plan review`) and surfaces the recorded mulch decision id on the `--record-decision` success path. JSON output is untouched: `--json` mode suppresses the Next block so stdout stays parseable. (seeds-d6cb)
+- Child seeds spawned by `sd plan submit` carry a marker-delimited "plan backref" block in their description with the step number, plan id, parent seed id+title, template, an excerpt of `sections.approach`, and a `sd plan show <pl-id>` link. `--overwrite` refreshes just the marker section in place; assignee, labels, and any manual notes outside the markers survive the rewrite. (seeds-76af)
+- `sd onboard` snippet surfaces the installed seeds version as both a `<!-- seeds-onboard:v$VERSION -->` marker and inline body text. A separate `<!-- seeds-onboard-schema:N -->` marker drives outdated-snippet detection so patch releases don't mark every existing snippet as outdated; legacy `seeds-onboard-v:N` markers auto-upgrade on next run. `VERSION` extracted to `src/version.ts` so it can be imported without triggering `index.ts` CLI side-effects. (seeds-3da2)
+
+### Fixed
+- `sd plan submit`: `step.blocks=[j]` now correctly means "this step blocks step `j`" (matching the PLAN_SPEC.md natural-language example). Previously the indices were written into each child's `blockedBy`, inverting the chain so `sd ready` surfaced trailing steps first. Both fresh-submit and overwrite paths now wire bidirectional edges (`source.blocks += target`, `target.blockedBy += source`) with dedupe; overwrite handles matched-source as well as matched-target, fixing a pre-existing case where edges added in a revision didn't update existing children. Inverted plans submitted before this fix are not auto-corrected (tracked separately in seeds-1c38). (seeds-4a54)
+- `sd plan show` no longer `JSON.stringify`s structured list entries into the user-facing review surface for `steps` and `alternatives`. Dispatch on the section spec: `kind=steps` formats step titles with indented `blocks`/`requires_plan`/`plan_template` sub-lines, `kind=list` with an object item schema renders each named field per line, and plans whose template is no longer registered fall back to a JSON dump rather than crash. (seeds-7d17)
+- `sd show <child-seed>`: the plan block now labels the step list "Plan steps" rather than "Children (N)" — the list is the seed's siblings, not its descendants. `sd plan show` keeps "Children" since the heading is correct from the plan's perspective. (seeds-b2d7)
+
 ## [0.4.0] - 2026-05-06
 
 ### Added
@@ -149,7 +162,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.1...HEAD
+[0.4.1]: https://github.com/jayminwest/seeds/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jayminwest/seeds/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jayminwest/seeds/compare/v0.2.5...v0.3.0
 [0.2.5]: https://github.com/jayminwest/seeds/compare/v0.2.4...v0.2.5
