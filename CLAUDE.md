@@ -316,9 +316,9 @@ When ending a work session, you MUST complete ALL steps below. Work is NOT compl
 
 <!-- mulch:start -->
 ## Project Expertise (Mulch)
-<!-- mulch-onboard-v:4 -->
+<!-- mulch-onboard:v0.8.0 -->
 
-This project uses [Mulch](https://github.com/jayminwest/mulch) for structured expertise management.
+This project uses [Mulch](https://github.com/jayminwest/mulch) v0.8.0 for structured expertise management.
 
 **At the start of every session**, run:
 ```bash
@@ -374,23 +374,36 @@ context, run `ml search --archived <query>`.
 
 <!-- seeds:start -->
 ## Issue Tracking (Seeds)
-<!-- seeds-onboard-v:1 -->
+<!-- seeds-onboard:v0.4.0 -->
+<!-- seeds-onboard-schema:4 -->
 
-This project uses [Seeds](https://github.com/jayminwest/seeds) for git-native issue tracking.
+This project uses [Seeds](https://github.com/jayminwest/seeds) v0.4.0 for git-native issue tracking.
 
 **At the start of every session**, run:
 ```
 sd prime
 ```
 
-This injects session context: rules, command reference, and workflows.
+This injects session context: rules, command reference, and workflows. Pass `--format json|compact|markdown|plain|ids` on any command for agent-friendly output.
 
 **Quick reference:**
 - `sd ready` — Find unblocked work
+- `sd search <query>` — Full-text search across titles + descriptions
 - `sd create --title "..." --type task --priority 2` — Create issue
 - `sd update <id> --status in_progress` — Claim work
 - `sd close <id>` — Complete work
+- `sd dep add <id> <depends-on>` — Add dependency between issues
 - `sd sync` — Sync with git (run before pushing)
+
+### Planning
+Use `sd plan` when work is large or ambiguous enough that an LLM benefits from structured decomposition. Submit spawns one child seed per step and wires `step.blocks` into `blockedBy` dependencies.
+
+- `sd plan templates` — List built-ins (`feature`, `bug`, `refactor`) plus custom templates
+- `sd plan prompt <seed-id>` — Emit a structured prompt the LLM fills in
+- `sd plan submit <seed-id> --plan <file>` — Validate + spawn child seeds
+- `sd plan show <pl-id>` — View sections, children, sub-plans
+- `sd plan outcome <pl-id> --result success|partial|failure` — Record outcome (storage-only)
+- `sd plan review <pl-id> --by <name>` — Record reviewer (informational)
 
 ### Before You Finish
 1. Close completed issues: `sd close <id>`
