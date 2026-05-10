@@ -51,6 +51,22 @@ function parsePriority(val: string): number {
 	return Number.parseInt(val, 10);
 }
 
+// Accept only a JSON object literal (not array, scalar, or null) — extensions
+// is a Record<string, unknown> by contract. See plan pl-c195 risk #5.
+function parseExtensionsPatch(raw: string): Record<string, unknown> {
+	let parsed: unknown;
+	try {
+		parsed = JSON.parse(raw);
+	} catch (e) {
+		const msg = e instanceof Error ? e.message : String(e);
+		throw new Error(`--extensions must be valid JSON: ${msg}`);
+	}
+	if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) {
+		throw new Error("--extensions must be a JSON object (not array, null, or scalar)");
+	}
+	return parsed as Record<string, unknown>;
+}
+
 export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const jsonMode = args.includes("--json");
 	const id = args.find((a) => !a.startsWith("--"));
@@ -97,6 +113,19 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 			const p = parsePriority(flags.priority);
 			if (Number.isNaN(p) || p < 0 || p > 4) throw new Error("--priority must be 0-4 or P0-P4");
 			patch.priority = p;
+		}
+
+		const extPatchProvided = typeof flags.extensions === "string";
+		const clearExt = flags["clear-extensions"] === true;
+		if (extPatchProvided && clearExt) {
+			throw new Error("--extensions and --clear-extensions are mutually exclusive");
+		}
+		if (clearExt) {
+			patch.extensions = undefined;
+		} else if (extPatchProvided) {
+			const incoming = parseExtensionsPatch(flags.extensions as string);
+			const merged: Record<string, unknown> = { ...(issue.extensions ?? {}), ...incoming };
+			patch.extensions = Object.keys(merged).length > 0 ? merged : undefined;
 		}
 
 		if (typeof flags["set-labels"] === "string") {
@@ -171,6 +200,8 @@ export function register(program: Command): void {
 		.option("--add-label <labels>", "Add label(s) (comma-separated)")
 		.option("--remove-label <labels>", "Remove label(s) (comma-separated)")
 		.option("--set-labels <labels>", "Set labels (comma-separated, empty to clear)")
+		.option("--extensions <json>", "Shallow-merge JSON object into Issue.extensions")
+		.option("--clear-extensions", "Remove the extensions field")
 		.option("--json", "Output as JSON")
 		.action(
 			async (
@@ -187,6 +218,8 @@ export function register(program: Command): void {
 					addLabel?: string;
 					removeLabel?: string;
 					setLabels?: string;
+					extensions?: string;
+					clearExtensions?: boolean;
 					json?: boolean;
 				},
 			) => {
@@ -202,6 +235,8 @@ export function register(program: Command): void {
 				if (opts.addLabel) args.push("--add-label", opts.addLabel);
 				if (opts.removeLabel) args.push("--remove-label", opts.removeLabel);
 				if (opts.setLabels !== undefined) args.push("--set-labels", opts.setLabels);
+				if (opts.extensions !== undefined) args.push("--extensions", opts.extensions);
+				if (opts.clearExtensions) args.push("--clear-extensions");
 				if (opts.json) args.push("--json");
 				await run(args);
 			},
