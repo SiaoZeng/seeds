@@ -71,6 +71,18 @@ export function printIssueOneLine(issue: Issue, closedBlockerIds?: Set<string>):
 	console.log(formatIssueOneLine(issue, closedBlockerIds));
 }
 
+// Render Issue.extensions as a single "Extensions: key=value ..." line.
+// Each value is JSON-encoded so the rendering round-trips unambiguously
+// (strings stay quoted; objects/arrays/null print as JSON literals).
+// Returns null when extensions is missing or has no own keys.
+export function formatExtensionsLine(ext: Record<string, unknown> | undefined): string | null {
+	if (!ext) return null;
+	const keys = Object.keys(ext);
+	if (keys.length === 0) return null;
+	const pairs = keys.map((k) => `${accent(k)}=${muted(JSON.stringify(ext[k]))}`);
+	return `Extensions: ${pairs.join(" ")}`;
+}
+
 export function formatIssueFull(issue: Issue): string {
 	const statusColor =
 		issue.status === "closed" ? muted : issue.status === "in_progress" ? chalk.cyan : brand;
@@ -83,6 +95,8 @@ export function formatIssueFull(issue: Issue): string {
 	if (issue.assignee) lines.push(`Assignee: ${issue.assignee}`);
 	if (issue.labels?.length)
 		lines.push(`Labels:   ${issue.labels.map((l) => accent(l)).join(", ")}`);
+	const extLine = formatExtensionsLine(issue.extensions);
+	if (extLine) lines.push(extLine);
 	if (issue.description) lines.push(`\n${issue.description}`);
 	if (issue.blockedBy?.length)
 		lines.push(`Blocked by: ${issue.blockedBy.map((id) => accent(id)).join(", ")}`);

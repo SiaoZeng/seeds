@@ -129,6 +129,67 @@ describe("--format on sd show", () => {
 		expect(lines[0]).toContain(id);
 		expect(lines[0]).toContain("hello");
 	});
+
+	test("default and plain modes render Extensions line when present", async () => {
+		const id = await create("ext-host", 2, tmpDir);
+		// Rewrite the issue with extensions; sd update --extensions lands in seeds-be14.
+		const issuesPath = join(tmpDir, ".seeds", "issues.jsonl");
+		const raw = await Bun.file(issuesPath).text();
+		const lines = raw.split("\n").filter(Boolean);
+		const issue = JSON.parse(lines[lines.length - 1] ?? "{}") as Record<string, unknown>;
+		issue.extensions = {
+			role: "refactor-bot",
+			queued: true,
+			scheduledFor: "2026-05-12T03:00:00.000Z",
+			lastRun: { id: "run-9c4d", ok: false },
+		};
+		await Bun.write(issuesPath, `${JSON.stringify(issue)}\n`);
+
+		const def = await run(["show", id], tmpDir);
+		expect(def.exitCode).toBe(0);
+		expect(def.stdout).toContain("Extensions:");
+		expect(def.stdout).toContain("role=");
+		expect(def.stdout).toContain('"refactor-bot"');
+		expect(def.stdout).toContain("queued=true");
+
+		const plain = await run(["show", id, "--format", "plain"], tmpDir);
+		expect(plain.exitCode).toBe(0);
+		expect(plain.stdout).not.toMatch(ANSI_RE);
+		expect(plain.stdout).toContain('Extensions: role="refactor-bot"');
+		expect(plain.stdout).toContain('scheduledFor="2026-05-12T03:00:00.000Z"');
+		expect(plain.stdout).toContain('lastRun={"id":"run-9c4d","ok":false}');
+	});
+
+	test("default mode omits Extensions line when field is missing or empty", async () => {
+		const id = await create("no-ext", 2, tmpDir);
+		const missing = await run(["show", id], tmpDir);
+		expect(missing.stdout).not.toContain("Extensions:");
+
+		const issuesPath = join(tmpDir, ".seeds", "issues.jsonl");
+		const raw = await Bun.file(issuesPath).text();
+		const last = raw.split("\n").filter(Boolean).pop() ?? "{}";
+		const issue = JSON.parse(last) as Record<string, unknown>;
+		issue.extensions = {};
+		await Bun.write(issuesPath, `${JSON.stringify(issue)}\n`);
+		const empty = await run(["show", id], tmpDir);
+		expect(empty.stdout).not.toContain("Extensions:");
+	});
+
+	test("json mode includes extensions on the issue payload", async () => {
+		const id = await create("ext-json", 2, tmpDir);
+		const issuesPath = join(tmpDir, ".seeds", "issues.jsonl");
+		const raw = await Bun.file(issuesPath).text();
+		const last = raw.split("\n").filter(Boolean).pop() ?? "{}";
+		const issue = JSON.parse(last) as Record<string, unknown>;
+		issue.extensions = { role: "refactor-bot", queued: true };
+		await Bun.write(issuesPath, `${JSON.stringify(issue)}\n`);
+
+		const out = await runJson<{ issue: { extensions?: Record<string, unknown> } }>(
+			["show", id],
+			tmpDir,
+		);
+		expect(out.issue.extensions).toEqual({ role: "refactor-bot", queued: true });
+	});
 });
 
 describe("--format on sd blocked", () => {
