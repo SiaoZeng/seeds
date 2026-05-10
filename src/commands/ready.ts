@@ -18,6 +18,22 @@ import { isSortMode, sortIssues, VALID_SORT_MODES } from "../sort.ts";
 import { readIssues } from "../store.ts";
 import type { Issue, Plan } from "../types.ts";
 
+// pl-c195 step 4: opt-in schedule filter. Two well-known extension keys:
+//   extensions.queued === true     → not ready yet (intentionally parked)
+//   extensions.scheduledFor: ISO8601 in the future → not ready yet
+// Malformed/past values fall through to ready as if the keys weren't set.
+function isScheduledOut(issue: Issue, now: number): boolean {
+	const ext = issue.extensions;
+	if (!ext) return false;
+	if (ext.queued === true) return true;
+	const sched = ext.scheduledFor;
+	if (typeof sched === "string") {
+		const t = Date.parse(sched);
+		if (!Number.isNaN(t) && t > now) return true;
+	}
+	return false;
+}
+
 function parseArgs(args: string[]): Record<string, string | boolean> {
 	const flags: Record<string, string | boolean> = {};
 	let i = 0;
@@ -91,6 +107,11 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	});
 
 	ready = applyIssueFilters(ready, filterOptionsFromFlags(flags));
+
+	if (flags["respect-schedule"] === true) {
+		const nowMs = Date.now();
+		ready = ready.filter((i) => !isScheduledOut(i, nowMs));
+	}
 
 	const sortFlag = typeof flags.sort === "string" ? flags.sort : "priority";
 	if (!isSortMode(sortFlag)) {
@@ -185,6 +206,10 @@ export function register(program: Command): void {
 		.option("--sort <mode>", "Sort order (priority|created|updated|id)", "priority")
 		.option("--format <mode>", `Output format (${VALID_FORMATS.join("|")})`)
 		.option("--json", "Output as JSON (alias for --format json)")
+		.option(
+			"--respect-schedule",
+			"Exclude issues with extensions.queued=true or future extensions.scheduledFor",
+		)
 		.action(
 			async (opts: {
 				type?: string;
@@ -198,6 +223,7 @@ export function register(program: Command): void {
 				sort?: string;
 				format?: string;
 				json?: boolean;
+				respectSchedule?: boolean;
 			}) => {
 				const args: string[] = [];
 				if (opts.type) args.push("--type", opts.type);
@@ -211,6 +237,7 @@ export function register(program: Command): void {
 				if (opts.sort) args.push("--sort", opts.sort);
 				if (opts.format) args.push("--format", opts.format);
 				if (opts.json) args.push("--json");
+				if (opts.respectSchedule) args.push("--respect-schedule");
 				await run(args);
 			},
 		);

@@ -17,10 +17,22 @@ async function run(
 	return { stdout, stderr, exitCode };
 }
 
-async function readyIds(cwd: string): Promise<string[]> {
-	const { stdout } = await run(["ready", "--json"], cwd);
+async function readyIds(cwd: string, extra: string[] = []): Promise<string[]> {
+	const { stdout } = await run(["ready", "--json", ...extra], cwd);
 	const parsed = JSON.parse(stdout) as { issues: Array<{ id: string }> };
 	return parsed.issues.map((i) => i.id);
+}
+
+async function setExtensions(seedId: string, ext: Record<string, unknown>): Promise<void> {
+	const issuesPath = join(tmpDir, ".seeds", "issues.jsonl");
+	const text = await Bun.file(issuesPath).text();
+	const lines = text.split("\n").filter((l) => l.trim());
+	const updated = lines.map((l) => {
+		const obj = JSON.parse(l) as Record<string, unknown> & { id: string };
+		if (obj.id === seedId) obj.extensions = ext;
+		return JSON.stringify(obj);
+	});
+	await Bun.write(issuesPath, `${updated.join("\n")}\n`);
 }
 
 async function setRequiresPlan(seedId: string): Promise<void> {
@@ -139,5 +151,69 @@ describe("sd ready: requires_plan exclusion (PLAN_SPEC.md:342)", () => {
 		const ids = await readyIds(tmpDir);
 		expect(ids).toContain(a);
 		expect(ids).toContain(b);
+	});
+});
+
+describe("sd ready --respect-schedule (pl-c195 step 4)", () => {
+	test("default sd ready ignores extensions.queued and extensions.scheduledFor", async () => {
+		const queued = await createSeed("Queued", tmpDir);
+		const future = await createSeed("Future", tmpDir);
+		await setExtensions(queued, { queued: true });
+		await setExtensions(future, {
+			scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+		});
+		const ids = await readyIds(tmpDir);
+		expect(ids).toContain(queued);
+		expect(ids).toContain(future);
+	});
+
+	test("--respect-schedule excludes extensions.queued === true", async () => {
+		const queued = await createSeed("Queued", tmpDir);
+		const plain = await createSeed("Plain", tmpDir);
+		await setExtensions(queued, { queued: true });
+		const ids = await readyIds(tmpDir, ["--respect-schedule"]);
+		expect(ids).not.toContain(queued);
+		expect(ids).toContain(plain);
+	});
+
+	test("--respect-schedule excludes future extensions.scheduledFor", async () => {
+		const future = await createSeed("Future", tmpDir);
+		const past = await createSeed("Past", tmpDir);
+		const plain = await createSeed("Plain", tmpDir);
+		await setExtensions(future, {
+			scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+		});
+		await setExtensions(past, {
+			scheduledFor: new Date(Date.now() - 60 * 60 * 1000).toISOString(),
+		});
+		const ids = await readyIds(tmpDir, ["--respect-schedule"]);
+		expect(ids).not.toContain(future);
+		expect(ids).toContain(past);
+		expect(ids).toContain(plain);
+	});
+
+	test("--respect-schedule treats truthy non-true queued as not parked", async () => {
+		// extensions.queued must be strictly true to park; "yes"/1/{} pass through.
+		const truthy = await createSeed("Truthy", tmpDir);
+		await setExtensions(truthy, { queued: "yes" });
+		const ids = await readyIds(tmpDir, ["--respect-schedule"]);
+		expect(ids).toContain(truthy);
+	});
+
+	test("--respect-schedule tolerates malformed scheduledFor", async () => {
+		const bad = await createSeed("Bad timestamp", tmpDir);
+		await setExtensions(bad, { scheduledFor: "not-a-date" });
+		const ids = await readyIds(tmpDir, ["--respect-schedule"]);
+		expect(ids).toContain(bad);
+	});
+
+	test("queued + future scheduledFor are both excluded together", async () => {
+		const both = await createSeed("Both", tmpDir);
+		await setExtensions(both, {
+			queued: true,
+			scheduledFor: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
+		});
+		const ids = await readyIds(tmpDir, ["--respect-schedule"]);
+		expect(ids).not.toContain(both);
 	});
 });
