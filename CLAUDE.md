@@ -40,6 +40,7 @@ seeds/
     store.ts                  # JSONL read/write/lock/atomic
     id.ts                     # ID generation
     config.ts                 # YAML config load/save
+    config-schema.ts          # JSON Schema for .seeds/config.yaml (sd config schema)
     output.ts                 # JSON + human output helpers
     yaml.ts                   # Minimal YAML parser (flat key-value only)
     markers.ts                # Marker-delimited section helpers (onboard)
@@ -67,6 +68,7 @@ seeds/
       onboard.ts              # sd onboard
       upgrade.ts              # sd upgrade
       completions.ts          # sd completions
+      config.ts               # sd config schema/show/set/unset
     markers.test.ts           # Marker section tests
     store.test.ts             # Core data layer tests
     id.test.ts                # ID generation tests
@@ -83,6 +85,7 @@ seeds/
       label.test.ts
       unblock.test.ts
       sync.test.ts
+      config.test.ts
     suggestions.test.ts       # Typo suggestion tests
     timing.test.ts            # --timing flag tests
 ```
@@ -193,6 +196,17 @@ sd tpl show <id>                       Show template with steps
 sd tpl pour <id> --prefix <text>       Instantiate template into issues
 sd tpl status <id>                     Show convoy status
 ```
+
+### Config Commands
+
+```
+sd config schema [--json]              Emit JSON Schema for .seeds/config.yaml
+sd config show [--path <p>] [--json]   Print config or a value at dot-path
+sd config set <path> <value>           Validate + write a value (YAML-parsed)
+sd config unset <path>                 Remove the value at <path>
+```
+
+`sd config` is the wire surface for warren V2's schema-driven config editor (warren ROADMAP R-10). Writes hold the `config.yaml` advisory lock and validate the entire post-write file via AJV before persisting; partial writes that would violate `SectionSpec` required fields are rejected. The schema's `additionalProperties: false` posture rejects unknown root keys. Built-in template defaults appear in `examples` so warren's UI can offer "copy a built-in to start". `$schema` is stripped before AJV compilation (the shared `compileSchema` runs draft-07 by default; the URI is purely informational for downstream consumers).
 
 ### Plan Commands
 

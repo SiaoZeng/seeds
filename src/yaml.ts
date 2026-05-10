@@ -227,7 +227,7 @@ function unquote(s: string): string {
 	return s;
 }
 
-function parseScalarOrFlow(s: string): YamlValue {
+export function parseScalarOrFlow(s: string): YamlValue {
 	if (s.startsWith("[")) return parseFlowSeq(s);
 	if (s.startsWith("{")) return parseFlowMap(s);
 	if (s.startsWith('"') || s.startsWith("'")) return unquote(s);

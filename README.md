@@ -117,6 +117,15 @@ See [Planning](#planning) below for the end-to-end workflow.
 |---------|-------------|
 | `sd doctor` | Check project health and data integrity (`--fix`) |
 
+### Config
+
+| Command | Description |
+|---------|-------------|
+| `sd config schema` | Emit the JSON Schema for `.seeds/config.yaml` (`--json` for compact output) |
+| `sd config show` | Print the current config or a value at `--path` (`--json`) |
+| `sd config set <path> <value>` | Validate + write a value at a dot-path; `<value>` is YAML-parsed |
+| `sd config unset <path>` | Remove the value at a dot-path |
+
 ### Agent Integration
 
 | Command | Description |
@@ -257,6 +266,29 @@ Default `sd ready` (no flag) is unchanged — agents still see queued items unle
 ### Health
 
 `sd doctor` includes an `extensions-schema` check that flags non-object `extensions` values; `sd doctor --fix` drops them.
+
+## Config
+
+`.seeds/config.yaml` is a small structured surface — `project`, `version`, `max_plan_depth`, and the nested `plan_templates` editor for custom plan templates. Seeds publishes a JSON Schema for this file so external UIs (warren V2's per-tool config editor) can render forms automatically and write back via per-knob CLI commands.
+
+```bash
+# Emit the schema (warren reads this once, renders a form)
+sd config schema --json
+
+# Read whole config or a specific dot-path
+sd config show
+sd config show --path plan_templates.feature.sections.context
+
+# Write a value (YAML-parsed; validated against the schema before write)
+sd config set max_plan_depth 5
+sd config set plan_templates.spike.sections.context \
+  '{required: true, kind: text, prompt: "Why this spike?", min_length: 30}'
+
+# Remove a value
+sd config unset plan_templates.spike
+```
+
+Writes hold the `config.yaml` advisory lock and validate the post-write file as a whole — partial writes that would leave the file inconsistent are rejected. The schema's `additionalProperties: false` posture means unknown root keys are rejected; namespace-your-keys rules apply at the issue level (`Issue.extensions`), not in the project config.
 
 ## Architecture
 
