@@ -17,7 +17,7 @@ function compactContent(): string {
 
 \`\`\`
 sd ready                  # Find unblocked work
-sd show <id>              # View issue details
+sd show <id> [id...]      # View one or more issues
 sd create --title "..."   # Create issue (--type, --priority)
 sd update <id> --status in_progress  # Claim work
 sd close <id>             # Complete work
@@ -67,7 +67,7 @@ function fullContent(): string {
 - \`sd ready\` — Show issues ready to work (no blockers)
 - \`sd list --status=open\` — All open issues
 - \`sd list --status=in_progress\` — Your active work
-- \`sd show <id>\` — Detailed issue view with dependencies
+- \`sd show <id> [<id2> ...]\` — Detailed issue view; multi-id shows each separated by a divider (\`--json\` returns \`issues: [...]\`)
 
 ### Creating & Updating
 - \`sd create --title="..." --type=task|bug|feature|epic --priority=2\` — New issue
