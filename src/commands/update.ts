@@ -92,6 +92,14 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				throw new Error(`--status must be one of: ${VALID_STATUSES.join(", ")}`);
 			}
 			patch.status = s as Issue["status"];
+			// Reopening (status moving away from "closed"): drop stale close metadata
+			// so `sd show` doesn't display a phantom closedAt/closeReason on an open
+			// issue. JSON.stringify omits keys with `undefined` values, so the spread
+			// `{...issue, ...patch}` followed by writeIssues clears them on disk.
+			if (patch.status !== "closed") {
+				patch.closedAt = undefined;
+				patch.closeReason = undefined;
+			}
 		}
 		if (typeof flags.title === "string") patch.title = flags.title;
 		if (typeof flags.assignee === "string") patch.assignee = flags.assignee;

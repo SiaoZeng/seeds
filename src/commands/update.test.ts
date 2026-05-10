@@ -144,3 +144,60 @@ describe("sd update --extensions", () => {
 		expect(await showExtensions(id, tmpDir)).toBeUndefined();
 	});
 });
+
+describe("sd update --status reopen", () => {
+	type ShowResult = {
+		issue: { status: string; closedAt?: string; closeReason?: string };
+	};
+
+	test("reopening a closed issue clears closedAt and closeReason", async () => {
+		const id = await create("reopen-1", tmpDir);
+		await run(["close", id, "--reason", "wontfix"], tmpDir);
+
+		const closed = await runJson<ShowResult>(["show", id], tmpDir);
+		expect(closed.issue.status).toBe("closed");
+		expect(closed.issue.closedAt).toBeDefined();
+		expect(closed.issue.closeReason).toBe("wontfix");
+
+		await run(["update", id, "--status", "open"], tmpDir);
+
+		const reopened = await runJson<ShowResult>(["show", id], tmpDir);
+		expect(reopened.issue.status).toBe("open");
+		expect(reopened.issue.closedAt).toBeUndefined();
+		expect(reopened.issue.closeReason).toBeUndefined();
+	});
+
+	test("moving from closed to in_progress also clears close metadata", async () => {
+		const id = await create("reopen-2", tmpDir);
+		await run(["close", id, "--reason", "stale"], tmpDir);
+		await run(["update", id, "--status", "in_progress"], tmpDir);
+
+		const after = await runJson<ShowResult>(["show", id], tmpDir);
+		expect(after.issue.status).toBe("in_progress");
+		expect(after.issue.closedAt).toBeUndefined();
+		expect(after.issue.closeReason).toBeUndefined();
+	});
+
+	test("re-closing keeps close metadata (no clear on status=closed)", async () => {
+		const id = await create("reopen-3", tmpDir);
+		await run(["close", id, "--reason", "first close"], tmpDir);
+		// Patch back to closed via update; closedAt + closeReason must persist.
+		await run(["update", id, "--status", "closed"], tmpDir);
+
+		const after = await runJson<ShowResult>(["show", id], tmpDir);
+		expect(after.issue.status).toBe("closed");
+		expect(after.issue.closedAt).toBeDefined();
+		expect(after.issue.closeReason).toBe("first close");
+	});
+
+	test("update without --status leaves close metadata untouched on closed issues", async () => {
+		const id = await create("reopen-4", tmpDir);
+		await run(["close", id, "--reason", "done"], tmpDir);
+		await run(["update", id, "--title", "renamed"], tmpDir);
+
+		const after = await runJson<ShowResult>(["show", id], tmpDir);
+		expect(after.issue.status).toBe("closed");
+		expect(after.issue.closedAt).toBeDefined();
+		expect(after.issue.closeReason).toBe("done");
+	});
+});

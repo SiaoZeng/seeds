@@ -600,7 +600,131 @@ describe("doctor: json output", () => {
 		expect(result.success).toBe(true);
 		expect(result.summary.fail).toBe(0);
 		expect(result.summary.warn).toBe(0);
-		expect(result.summary.pass).toBe(11);
+		expect(result.summary.pass).toBe(12);
+	});
+});
+
+describe("doctor: closed-fields-consistency check", () => {
+	test("fails when status=open but closedAt is set", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Reopened with stale closedAt",
+			status: "open",
+			type: "task",
+			priority: 2,
+			closedAt: now,
+			closeReason: "obsolete",
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "closed-fields-consistency");
+		expect(check?.status).toBe("fail");
+		expect(check?.details[0]).toContain("test-0001");
+		expect(check?.details[0]).toContain("closedAt");
+		expect(check?.details[0]).toContain("closeReason");
+	});
+
+	test("fails when status=in_progress but closeReason is set", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "In-progress with stale reason",
+			status: "in_progress",
+			type: "task",
+			priority: 2,
+			closeReason: "leftover",
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "closed-fields-consistency");
+		expect(check?.status).toBe("fail");
+	});
+
+	test("warns when status=closed but closedAt is missing", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Closed without closedAt",
+			status: "closed",
+			type: "task",
+			priority: 2,
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "closed-fields-consistency");
+		expect(check?.status).toBe("warn");
+	});
+
+	test("passes on a normal closed issue", async () => {
+		await run(["init"], tmpDir);
+		const id = (await runJson<{ id: string }>(["create", "--title", "Done"], tmpDir)).id;
+		await run(["close", id, "--reason", "completed"], tmpDir);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "closed-fields-consistency");
+		expect(check?.status).toBe("pass");
+	});
+
+	test("--fix clears stale close metadata on reopened issues", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Reopened with stale closedAt",
+			status: "open",
+			type: "task",
+			priority: 2,
+			closedAt: now,
+			closeReason: "obsolete",
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const after = await runJson<DoctorResult>(["doctor", "--fix"], tmpDir);
+		const check = after.checks.find((ch) => ch.name === "closed-fields-consistency");
+		expect(check?.status).toBe("pass");
+
+		const content = readFileSync(join(seedsDir(tmpDir), "issues.jsonl"), "utf8");
+		const parsed = JSON.parse(content.trim()) as { closedAt?: unknown; closeReason?: unknown };
+		expect(parsed.closedAt).toBeUndefined();
+		expect(parsed.closeReason).toBeUndefined();
+	});
+
+	test("--fix sets closedAt=updatedAt when missing on closed issue", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Closed without closedAt",
+			status: "closed",
+			type: "task",
+			priority: 2,
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const after = await runJson<DoctorResult>(["doctor", "--fix"], tmpDir);
+		const check = after.checks.find((ch) => ch.name === "closed-fields-consistency");
+		expect(check?.status).toBe("pass");
+
+		const content = readFileSync(join(seedsDir(tmpDir), "issues.jsonl"), "utf8");
+		const parsed = JSON.parse(content.trim()) as { closedAt?: string };
+		expect(parsed.closedAt).toBe(now);
 	});
 });
 

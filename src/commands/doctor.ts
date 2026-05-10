@@ -390,6 +390,54 @@ function checkExtensionsSchema(seedsDir: string): DoctorCheck {
 	};
 }
 
+function checkClosedFieldsConsistency(seedsDir: string): DoctorCheck {
+	const failures: string[] = [];
+	const warnings: string[] = [];
+	const lines = readRawLines(join(seedsDir, ISSUES_FILE));
+	for (const line of lines) {
+		if (!line.parsed) continue;
+		const issue = line.parsed as Record<string, unknown>;
+		const id = typeof issue.id === "string" ? issue.id : `line ${String(line.lineNumber)}`;
+		const status = typeof issue.status === "string" ? issue.status : undefined;
+		const hasClosedAt = typeof issue.closedAt === "string" && issue.closedAt.length > 0;
+		const hasReason = typeof issue.closeReason === "string" && issue.closeReason.length > 0;
+		if (status && status !== "closed" && (hasClosedAt || hasReason)) {
+			const stale: string[] = [];
+			if (hasClosedAt) stale.push("closedAt");
+			if (hasReason) stale.push("closeReason");
+			failures.push(`${id}: status=${status} but ${stale.join("+")} still set`);
+		} else if (status === "closed" && !hasClosedAt) {
+			warnings.push(`${id}: status=closed but closedAt missing`);
+		}
+	}
+	const total = failures.length + warnings.length;
+	if (failures.length > 0) {
+		return {
+			name: "closed-fields-consistency",
+			status: "fail",
+			message: `${String(total)} status/close-metadata mismatch(es)`,
+			details: [...failures, ...warnings],
+			fixable: true,
+		};
+	}
+	if (warnings.length > 0) {
+		return {
+			name: "closed-fields-consistency",
+			status: "warn",
+			message: `${String(warnings.length)} closed issue(s) missing closedAt`,
+			details: warnings,
+			fixable: true,
+		};
+	}
+	return {
+		name: "closed-fields-consistency",
+		status: "pass",
+		message: "All status/close-metadata pairs are consistent",
+		details: [],
+		fixable: false,
+	};
+}
+
 function checkStaleLocks(seedsDir: string): DoctorCheck {
 	const details: string[] = [];
 	for (const file of [ISSUES_FILE, TEMPLATES_FILE]) {
@@ -525,6 +573,10 @@ function applyFixes(seedsDir: string, checks: DoctorCheck[]): string[] {
 				fixExtensionsSchema(seedsDir, fixed);
 				break;
 			}
+			case "closed-fields-consistency": {
+				fixClosedFieldsConsistency(seedsDir, fixed);
+				break;
+			}
 			case "gitattributes": {
 				fixGitattributes(seedsDir, fixed);
 				break;
@@ -593,6 +645,37 @@ function fixExtensionsSchema(seedsDir: string, fixed: string[]): void {
 		const content = `${issues.map((i) => JSON.stringify(i)).join("\n")}\n`;
 		writeFileSync(join(seedsDir, ISSUES_FILE), content);
 		fixed.push("Dropped malformed extensions fields");
+	}
+}
+
+function fixClosedFieldsConsistency(seedsDir: string, fixed: string[]): void {
+	const lines = readRawLines(join(seedsDir, ISSUES_FILE));
+	const idMap = new Map<string, Issue>();
+	for (const line of lines) {
+		if (!line.parsed) continue;
+		const issue = line.parsed as Issue;
+		if (typeof issue.id === "string") {
+			idMap.set(issue.id, issue);
+		}
+	}
+	const issues = Array.from(idMap.values());
+	let changed = false;
+	for (const issue of issues) {
+		if (issue.status !== "closed") {
+			if (issue.closedAt !== undefined || issue.closeReason !== undefined) {
+				issue.closedAt = undefined;
+				issue.closeReason = undefined;
+				changed = true;
+			}
+		} else if (!issue.closedAt) {
+			issue.closedAt = issue.updatedAt;
+			changed = true;
+		}
+	}
+	if (changed) {
+		const content = `${issues.map((i) => JSON.stringify(i)).join("\n")}\n`;
+		writeFileSync(join(seedsDir, ISSUES_FILE), content);
+		fixed.push("Repaired status/close-metadata mismatches");
 	}
 }
 
@@ -790,6 +873,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	checks.push(checkCircularDependencies(issues));
 	checks.push(checkLabelSchema(dir));
 	checks.push(checkExtensionsSchema(dir));
+	checks.push(checkClosedFieldsConsistency(dir));
 	checks.push(checkStaleLocks(dir));
 	checks.push(checkGitattributes(dir));
 
@@ -818,6 +902,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				reChecks.push(checkCircularDependencies(reIssues));
 				reChecks.push(checkLabelSchema(dir));
 				reChecks.push(checkExtensionsSchema(dir));
+				reChecks.push(checkClosedFieldsConsistency(dir));
 				reChecks.push(checkStaleLocks(dir));
 				reChecks.push(checkGitattributes(dir));
 			}
