@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Issue.extensions?: Record<string, unknown>` — optional, opaque-to-seeds field for runtime metadata that consumers (warren, greenhouse, overstory) own under namespaced keys. Seeds performs no schema validation on the value; it round-trips byte-for-byte through `.seeds/issues.jsonl`. (seeds-f35a, plan pl-c195)
+- `sd show` renders an `Extensions: key=value ...` line when the field is present and non-empty; each value is JSON-encoded so strings stay quoted and nested objects/arrays/null are unambiguous. JSON output is unchanged — extensions already serialized as part of the issue payload. (seeds-e7ea)
+- `sd update --extensions <json>` shallow-merges (`{...existing, ...incoming}`) a JSON object into `Issue.extensions`. `--clear-extensions` removes the field. The two flags are mutually exclusive; arrays, `null`, scalars, and malformed JSON are rejected with a clear error. Merge is one level deep — consumers needing nested structure should keep keys flat (e.g. `lastRunId`, `lastRunAt`) rather than nesting under `lastRun`. (seeds-be14)
+- `sd ready --respect-schedule` (opt-in) excludes issues where `extensions.queued === true` (strict equality) or `extensions.scheduledFor` parses to a future ISO8601 timestamp. Default `sd ready` behavior is unchanged — agents still see queued items unless they ask for the schedule-aware view. Designed for warren's cron-driven dispatch. (seeds-614b)
+- `sd doctor` adds an `extensions-schema` check that flags non-object `extensions` values (null, arrays, scalars). `sd doctor --fix` drops malformed values. (seeds-56ff)
+
+### Convention
+- **Extension namespacing.** Each consumer owns a top-level prefix on `Issue.extensions` (e.g. `extensions.warren_*`, `extensions.greenhouse_*`) or a single namespaced sub-object. The two well-known keys consumed by `sd ready --respect-schedule` are `extensions.queued` (boolean) and `extensions.scheduledFor` (ISO8601 string). Other keys are opaque to seeds.
+
 ## [0.4.1] - 2026-05-08
 
 ### Added

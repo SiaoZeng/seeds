@@ -143,12 +143,15 @@ sd ready                               Open issues with no unresolved blockers
   --label --label-any --unlabeled
   --priority --priority-max
   --sort --format
+  --respect-schedule                   Exclude extensions.queued===true or future extensions.scheduledFor
 sd search <query>                      Substring search on title + description
   --status --type --assignee
   --label --label-any --unlabeled
   --priority --priority-max
   --limit --sort --format
 sd update <id>                         Update issue fields
+  --extensions <json>                  Shallow-merge JSON object into Issue.extensions
+  --clear-extensions                   Remove the extensions field
 sd close <id> [<id2> ...]              Close one or more issues
   --reason <text>
 sd dep add <issue> <depends-on>        Add dependency
@@ -241,6 +244,14 @@ sd plan review <pl-id> --by <name>     Record a reviewer (informational; not a s
 - Tests colocated with source (e.g., `src/store.test.ts`)
 - Core modules at `src/` root (types, store, id, config, output, yaml)
 
+### Extensions
+
+- `Issue.extensions?: Record<string, unknown>` is **opaque to seeds** — no schema, no validation in the storage layer. Consumers (warren, greenhouse, overstory) own namespaced keys (`warren_*`, `greenhouse_*`) and ship their own meaning.
+- `sd update --extensions <json>` shallow-merges (`{...existing, ...incoming}`); `--clear-extensions` drops the field. Mutually exclusive. Arrays/null/scalars at the top level are rejected.
+- Two well-known keys are read by `sd ready --respect-schedule` (opt-in): `extensions.queued` (strict `=== true`) and `extensions.scheduledFor` (ISO8601, future = parked). Default ready is byte-identical to pre-extensions behavior.
+- `sd doctor` has an `extensions-schema` check (flags non-object values; `--fix` drops them). When adding more checks, remember to bump the hardcoded pass count in `doctor.test.ts` (mx-957e8f).
+- Keep consumer keys flat (`lastRunId`, `lastRunAt`) — the merge contract is one level deep, so nested objects get clobbered on partial update.
+
 ### Planning
 
 - Use `sd plan` when work is large or ambiguous enough that an LLM benefits from structured decomposition before implementing.
@@ -271,6 +282,7 @@ interface Issue {
   closeReason?: string;
   blocks?: string[];
   blockedBy?: string[];
+  extensions?: Record<string, unknown>;  // opaque runtime metadata (consumer-owned, namespaced)
   createdAt: string;           // ISO 8601
   updatedAt: string;
   closedAt?: string;

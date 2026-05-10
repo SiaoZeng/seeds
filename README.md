@@ -68,9 +68,9 @@ Every command supports `--json` for structured output. `sd list`, `sd ready`, `s
 | `sd create --title <text>` | Create a new issue (`--type`, `--priority`, `--description`, `--assignee`) |
 | `sd show <id>` | Show issue details |
 | `sd list` | List issues with filters (`--status`, `--type`, `--assignee`, `--label`, `--priority`, `--priority-max`, `--limit`, `--all`, `--sort`, `--format`) |
-| `sd ready` | Open issues with no unresolved blockers (`--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--priority`, `--priority-max`, `--limit`, `--sort`, `--format`) |
+| `sd ready` | Open issues with no unresolved blockers (`--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--priority`, `--priority-max`, `--limit`, `--sort`, `--format`, `--respect-schedule`) |
 | `sd search <query>` | Case-insensitive substring search on title + description (`--status`, `--type`, `--assignee`, `--label`, `--label-any`, `--unlabeled`, `--priority`, `--priority-max`, `--limit`, `--sort`, `--format`) |
-| `sd update <id>` | Update issue fields (`--status`, `--title`, `--priority`, `--assignee`, `--description`) |
+| `sd update <id>` | Update issue fields (`--status`, `--title`, `--priority`, `--assignee`, `--description`, `--extensions`, `--clear-extensions`) |
 | `sd close <id> [<id2> ...]` | Close one or more issues (`--reason`) |
 | `sd dep add <issue> <depends-on>` | Add dependency |
 | `sd dep remove <issue> <depends-on>` | Remove dependency |
@@ -214,6 +214,49 @@ Outcomes (`success | partial | failure`) are storage-only — aggregation and re
 A step can declare `plan_template: <name>` to spawn a child seed that requires its own sub-plan. The child is created with `requires_plan: true` and is hidden from `sd ready` until its plan is submitted. `sd plan show` recursively renders nested plans up to `max_plan_depth` (default 3).
 
 Full spec: see [PLAN_SPEC.md](./PLAN_SPEC.md).
+
+## Extensions
+
+Issues carry an optional `extensions?: Record<string, unknown>` field for **runtime metadata** owned by downstream consumers — warren's scheduling state, greenhouse's dispatch pointers, overstory's run trail. Seeds itself treats the value as opaque JSON: no schema, no validation, round-trips byte-for-byte through `.seeds/issues.jsonl`.
+
+```bash
+# Set or merge extension keys (shallow merge, one level deep)
+sd update seeds-a1b2 --extensions '{"warren_role":"refactor-bot","warren_scheduledFor":"2026-05-12T03:00:00Z"}'
+
+# Subsequent updates merge into existing keys
+sd update seeds-a1b2 --extensions '{"warren_lastRunId":"r-9c4d"}'
+# → extensions: { warren_role, warren_scheduledFor, warren_lastRunId }
+
+# Drop the field entirely
+sd update seeds-a1b2 --clear-extensions
+```
+
+`sd show` renders an `Extensions: key=value ...` line when the field is present; values are JSON-encoded so strings stay quoted and nested objects/arrays/null are unambiguous. `sd list --format json`, `sd show --json`, and `sd ready --format json` already serialize the field as part of the issue payload — no extra flag.
+
+### Conventions
+
+- **Namespace your keys.** Each consumer owns a top-level prefix (`warren_*`, `greenhouse_*`) or a single namespaced sub-object — never bare keys like `role` or `lastRun` at the root of `extensions`. This avoids collisions across tools.
+- **Keep keys flat for partial updates.** `--extensions` shallow-merges (`{...existing, ...incoming}`); a nested `lastRun: {id, at}` patch will overwrite the entire object. If you need partial updates of related fields, use sibling keys (`lastRunId`, `lastRunAt`).
+- **Plain object only.** Top-level `extensions` must be a JSON object — arrays, `null`, and scalars are rejected by `sd update` and flagged by `sd doctor`. Nested values inside the object can be anything.
+- **Concurrent writes follow the JSONL merge model.** Like every other field, two branches that update `extensions` on the same issue collapse via `merge=union` + dedup-on-read (last-occurrence wins). Consumers needing strict ordering should serialize through a single agent.
+
+### Schedule-aware ready (opt-in)
+
+`sd ready --respect-schedule` consumes two well-known keys so warren can park items without losing them:
+
+```bash
+sd ready --respect-schedule
+```
+
+Excludes issues where:
+- `extensions.queued === true` (strict equality) — intentionally parked
+- `extensions.scheduledFor` parses to a future ISO8601 timestamp — not due yet
+
+Default `sd ready` (no flag) is unchanged — agents still see queued items unless they ask for the schedule-aware view. Malformed or past values fall through as if the keys weren't set.
+
+### Health
+
+`sd doctor` includes an `extensions-schema` check that flags non-object `extensions` values; `sd doctor --fix` drops them.
 
 ## Architecture
 
