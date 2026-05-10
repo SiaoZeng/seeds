@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2026-05-10
+
 ### Added
 - `Issue.extensions?: Record<string, unknown>` — optional, opaque-to-seeds field for runtime metadata that consumers (warren, greenhouse, overstory) own under namespaced keys. Seeds performs no schema validation on the value; it round-trips byte-for-byte through `.seeds/issues.jsonl`. (seeds-f35a, plan pl-c195)
 - `sd show` renders an `Extensions: key=value ...` line when the field is present and non-empty; each value is JSON-encoded so strings stay quoted and nested objects/arrays/null are unambiguous. JSON output is unchanged — extensions already serialized as part of the issue payload. (seeds-e7ea)
@@ -172,7 +174,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.1...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.2...HEAD
+[0.4.2]: https://github.com/jayminwest/seeds/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jayminwest/seeds/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jayminwest/seeds/compare/v0.3.0...v0.4.0
 [0.3.0]: https://github.com/jayminwest/seeds/compare/v0.2.5...v0.3.0
