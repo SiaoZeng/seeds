@@ -12,6 +12,7 @@ import {
 } from "../output.ts";
 import { loadPlanContext, planForIssue, summarisePlanChildren } from "../plan-context.ts";
 import { readIssues } from "../store.ts";
+import { runShow as runPlanShow } from "./plan.ts";
 
 export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const fmt = resolveFormat(args);
@@ -31,7 +32,19 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const dir = seedsDir ?? (await findSeedsDir());
 	const issues = await readIssues(dir);
 	const issue = issues.find((i) => i.id === id);
-	if (!issue) throw new Error(`Issue not found: ${id}`);
+	if (!issue) {
+		if (id.startsWith("pl-")) {
+			if (fmt.mode !== "markdown" && fmt.mode !== "json") {
+				const errMsg = `sd show ${id}: --format ${fmt.mode} is not supported for plan ids; pass --json or use 'sd plan show ${id}'`;
+				console.error(errMsg);
+				process.exitCode = 1;
+				return;
+			}
+			await runPlanShow(id, jsonMode);
+			return;
+		}
+		throw new Error(`Issue not found: ${id}`);
+	}
 
 	const planCtx = await loadPlanContext(dir);
 	const plan = planForIssue(planCtx, issue);

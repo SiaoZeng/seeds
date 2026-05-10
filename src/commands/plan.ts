@@ -1110,7 +1110,7 @@ async function resolvePlanIdArg(arg: string, dir: string): Promise<string> {
 	return seed.plan_id;
 }
 
-async function runShow(idArg: string, jsonMode: boolean): Promise<void> {
+export async function runShow(idArg: string, jsonMode: boolean): Promise<void> {
 	const dir = await findSeedsDir();
 	const planId = await resolvePlanIdArg(idArg, dir);
 	const config = await readConfig(dir);

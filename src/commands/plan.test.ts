@@ -702,6 +702,61 @@ describe("sd plan show", () => {
 	});
 });
 
+describe("sd show <pl-id> routes to plan show (seeds-66de)", () => {
+	test("human output mirrors sd plan show", async () => {
+		const seedId = await createSeed(tmpDir, "Parent");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+
+		const showOut = await run(["show", planId], tmpDir);
+		const planShowOut = await run(["plan", "show", planId], tmpDir);
+		expect(showOut.exitCode).toBe(0);
+		expect(showOut.stdout).toBe(planShowOut.stdout);
+		expect(showOut.stdout).toContain(planId);
+		expect(showOut.stdout).toContain("Step A");
+	});
+
+	test("--json emits the plan show payload", async () => {
+		const seedId = await createSeed(tmpDir, "Parent");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+
+		const { stdout, exitCode } = await run(["show", planId, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const parsed = JSON.parse(stdout) as {
+			success: boolean;
+			command: string;
+			plan: { id: string };
+			children: Array<{ id: string }>;
+		};
+		expect(parsed.success).toBe(true);
+		expect(parsed.command).toBe("plan show");
+		expect(parsed.plan.id).toBe(planId);
+		expect(parsed.children.length).toBe(4);
+	});
+
+	test("unknown plan id errors cleanly (no 'Issue not found')", async () => {
+		const { stderr, exitCode } = await run(["show", "pl-9999"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).not.toContain("Issue not found");
+		expect(stderr.toLowerCase()).toContain("plan not found");
+	});
+
+	test("unsupported --format on pl- id errors with hint", async () => {
+		const seedId = await createSeed(tmpDir, "Parent");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+
+		const { stderr, exitCode } = await run(["show", planId, "--format", "compact"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("not supported for plan ids");
+		expect(stderr).toContain(`sd plan show ${planId}`);
+	});
+});
+
 describe("sd plan show: structured list rendering (seeds-7d17)", () => {
 	async function submitPlan(plan: unknown): Promise<string> {
 		const seedId = await createSeed(tmpDir, "Renderer parent", "feature");
