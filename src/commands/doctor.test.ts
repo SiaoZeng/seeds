@@ -424,6 +424,122 @@ describe("doctor: stale-locks check", () => {
 	});
 });
 
+describe("doctor: extensions-schema check", () => {
+	test("warns when extensions is an array", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Bad ext",
+			status: "open",
+			type: "task",
+			priority: 2,
+			extensions: ["not", "an", "object"],
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "extensions-schema");
+		expect(check?.status).toBe("warn");
+		expect(check?.details[0]).toContain("test-0001");
+	});
+
+	test("warns when extensions is null", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Bad ext",
+			status: "open",
+			type: "task",
+			priority: 2,
+			extensions: null,
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "extensions-schema");
+		expect(check?.status).toBe("warn");
+	});
+
+	test("warns when extensions is a scalar", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Bad ext",
+			status: "open",
+			type: "task",
+			priority: 2,
+			extensions: "not-an-object",
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "extensions-schema");
+		expect(check?.status).toBe("warn");
+	});
+
+	test("passes when extensions is a plain object", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Good ext",
+			status: "open",
+			type: "task",
+			priority: 2,
+			extensions: { role: "refactor-bot", scheduledFor: now },
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "extensions-schema");
+		expect(check?.status).toBe("pass");
+	});
+
+	test("passes when extensions is absent", async () => {
+		await run(["init"], tmpDir);
+		await run(["create", "--title", "No ext"], tmpDir);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "extensions-schema");
+		expect(check?.status).toBe("pass");
+	});
+
+	test("--fix drops malformed extensions", async () => {
+		await run(["init"], tmpDir);
+		const now = new Date().toISOString();
+		const issue = JSON.stringify({
+			id: "test-0001",
+			title: "Bad ext",
+			status: "open",
+			type: "task",
+			priority: 2,
+			extensions: ["bad"],
+			createdAt: now,
+			updatedAt: now,
+		});
+		writeFileSync(join(seedsDir(tmpDir), "issues.jsonl"), `${issue}\n`);
+
+		const after = await runJson<DoctorResult>(["doctor", "--fix"], tmpDir);
+		const check = after.checks.find((ch) => ch.name === "extensions-schema");
+		expect(check?.status).toBe("pass");
+
+		const content = readFileSync(join(seedsDir(tmpDir), "issues.jsonl"), "utf8");
+		const parsed = JSON.parse(content.trim()) as { extensions?: unknown };
+		expect(parsed.extensions).toBeUndefined();
+	});
+});
+
 describe("doctor: gitattributes check", () => {
 	test("warns when .gitattributes is missing", async () => {
 		await run(["init"], tmpDir);
@@ -484,7 +600,7 @@ describe("doctor: json output", () => {
 		expect(result.success).toBe(true);
 		expect(result.summary.fail).toBe(0);
 		expect(result.summary.warn).toBe(0);
-		expect(result.summary.pass).toBe(10);
+		expect(result.summary.pass).toBe(11);
 	});
 });
 

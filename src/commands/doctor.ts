@@ -359,6 +359,37 @@ function checkLabelSchema(seedsDir: string): DoctorCheck {
 	};
 }
 
+function checkExtensionsSchema(seedsDir: string): DoctorCheck {
+	const details: string[] = [];
+	const lines = readRawLines(join(seedsDir, ISSUES_FILE));
+	for (const line of lines) {
+		if (!line.parsed) continue;
+		const issue = line.parsed as Record<string, unknown>;
+		const id = typeof issue.id === "string" ? issue.id : `line ${String(line.lineNumber)}`;
+		if (issue.extensions === undefined) continue;
+		const ext = issue.extensions;
+		if (ext === null || typeof ext !== "object" || Array.isArray(ext)) {
+			details.push(`${id}: extensions must be a plain object: ${JSON.stringify(ext)}`);
+		}
+	}
+	if (details.length > 0) {
+		return {
+			name: "extensions-schema",
+			status: "warn",
+			message: `${String(details.length)} malformed extensions field(s)`,
+			details,
+			fixable: true,
+		};
+	}
+	return {
+		name: "extensions-schema",
+		status: "pass",
+		message: "All extensions fields are valid",
+		details: [],
+		fixable: false,
+	};
+}
+
 function checkStaleLocks(seedsDir: string): DoctorCheck {
 	const details: string[] = [];
 	for (const file of [ISSUES_FILE, TEMPLATES_FILE]) {
@@ -490,6 +521,10 @@ function applyFixes(seedsDir: string, checks: DoctorCheck[]): string[] {
 				fixLabelSchema(seedsDir, fixed);
 				break;
 			}
+			case "extensions-schema": {
+				fixExtensionsSchema(seedsDir, fixed);
+				break;
+			}
 			case "gitattributes": {
 				fixGitattributes(seedsDir, fixed);
 				break;
@@ -531,6 +566,33 @@ function fixLabelSchema(seedsDir: string, fixed: string[]): void {
 		const content = `${issues.map((i) => JSON.stringify(i)).join("\n")}\n`;
 		writeFileSync(join(seedsDir, ISSUES_FILE), content);
 		fixed.push("Cleaned up invalid label entries");
+	}
+}
+
+function fixExtensionsSchema(seedsDir: string, fixed: string[]): void {
+	const lines = readRawLines(join(seedsDir, ISSUES_FILE));
+	const idMap = new Map<string, Issue>();
+	for (const line of lines) {
+		if (!line.parsed) continue;
+		const issue = line.parsed as Issue;
+		if (typeof issue.id === "string") {
+			idMap.set(issue.id, issue);
+		}
+	}
+	const issues = Array.from(idMap.values());
+	let changed = false;
+	for (const issue of issues) {
+		const ext = issue.extensions as unknown;
+		if (ext === undefined) continue;
+		if (ext === null || typeof ext !== "object" || Array.isArray(ext)) {
+			issue.extensions = undefined;
+			changed = true;
+		}
+	}
+	if (changed) {
+		const content = `${issues.map((i) => JSON.stringify(i)).join("\n")}\n`;
+		writeFileSync(join(seedsDir, ISSUES_FILE), content);
+		fixed.push("Dropped malformed extensions fields");
 	}
 }
 
@@ -727,6 +789,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	checks.push(checkBidirectionalConsistency(issues));
 	checks.push(checkCircularDependencies(issues));
 	checks.push(checkLabelSchema(dir));
+	checks.push(checkExtensionsSchema(dir));
 	checks.push(checkStaleLocks(dir));
 	checks.push(checkGitattributes(dir));
 
@@ -754,6 +817,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				reChecks.push(checkBidirectionalConsistency(reIssues));
 				reChecks.push(checkCircularDependencies(reIssues));
 				reChecks.push(checkLabelSchema(dir));
+				reChecks.push(checkExtensionsSchema(dir));
 				reChecks.push(checkStaleLocks(dir));
 				reChecks.push(checkGitattributes(dir));
 			}
