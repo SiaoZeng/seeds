@@ -7,12 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Fixed
-- `sd show <pl-id>` now shows the plan instead of erroring `Issue not found`. When the requested id starts with `pl-` and isn't in `issues.jsonl`, `sd show` routes to the same renderer as `sd plan show` for both default and `--json` output. `--format compact|plain|ids` on a plan id errors with a hint pointing to `sd plan show`. Issue lookup happens first, so projects literally named `pl` (whose issue ids share the `pl-XXXX` shape) still resolve normally. (seeds-66de)
+## [0.4.3] - 2026-05-10
 
 ### Added
 - `sd show <id> [<id2> ...]` accepts multiple ids in one call; agents reviewing related issues (blockers, deps, plan children) no longer pay one shell-out per id. Each output format gets a per-format separator: default human uses a 60-char `─` divider between entries, `--format plain` uses a blank line, `--format compact` and `--format ids` print one entry per line, `--json` returns an `issues` array (with optional `errors` for unknown ids). Single-id behavior — including the `{issue, plan, plan_children}` JSON shape and the `pl-*` → `sd plan show` routing — is preserved exactly; plan ids in multi-id mode are reported as per-id errors pointing at `sd plan show`. Unknown ids do not abort the rest of the call (mirroring `sd close`); the command exits non-zero when any id fails. (seeds-4eba)
 - `sd config` command tree — schema-driven read/write surface for `.seeds/config.yaml` aimed at warren V2's per-tool config UI (warren ROADMAP R-10). `sd config schema [--json]` emits the JSON Schema; `sd config show [--path <p>] [--json]` reads the whole config or a value at a dot-path; `sd config set <path> <value>` validates + writes atomically (`<value>` is YAML-parsed); `sd config unset <path>` removes a value. Writes hold the `config.yaml` advisory lock and validate the post-write file against the schema; partial writes that would leave the file inconsistent are rejected. The schema covers `project`, `version`, `max_plan_depth`, and the nested `plan_templates` editor (with built-in template defaults in `examples`). Locked with a golden test in `src/commands/config.test.ts` so any wire-format change is intentional. (seeds-ac83)
+- `sd doctor` adds a `closed-fields-consistency` check (`--fix`-able): non-closed issues with stale `closedAt`/`closeReason` fail (fix clears both); closed issues missing `closedAt` warn (fix sets it to `updatedAt`). Doctor pass count bumped 11 → 12. (seeds-8526)
+
+### Fixed
+- `sd show <pl-id>` now shows the plan instead of erroring `Issue not found`. When the requested id starts with `pl-` and isn't in `issues.jsonl`, `sd show` routes to the same renderer as `sd plan show` for both default and `--json` output. `--format compact|plain|ids` on a plan id errors with a hint pointing to `sd plan show`. Issue lookup happens first, so projects literally named `pl` (whose issue ids share the `pl-XXXX` shape) still resolve normally. (seeds-66de)
+- `sd update --status open` (or any non-closed status) now drops stale `closedAt` / `closeReason` from the record. Previously a close→reopen cycle left phantom close metadata so `sd show` displayed a "closed at" timestamp on an open issue. (seeds-8526)
 
 ## [0.4.2] - 2026-05-10
 
@@ -181,7 +185,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.2...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.3...HEAD
+[0.4.3]: https://github.com/jayminwest/seeds/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/jayminwest/seeds/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jayminwest/seeds/compare/v0.4.0...v0.4.1
 [0.4.0]: https://github.com/jayminwest/seeds/compare/v0.3.0...v0.4.0
