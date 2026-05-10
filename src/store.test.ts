@@ -89,6 +89,29 @@ describe("readIssues", () => {
 		const issues = await readIssues(seedsDir);
 		expect(issues).toHaveLength(1);
 	});
+
+	test("round-trips Issue.extensions with mixed scalar, ISO8601, and nested values", async () => {
+		const issue = makeIssue({
+			extensions: {
+				role: "refactor-bot",
+				queued: true,
+				attempts: 3,
+				scheduledFor: "2026-05-12T03:00:00.000Z",
+				lastRun: {
+					id: "run-9c4d",
+					at: "2026-05-10T16:57:24.830Z",
+					ok: false,
+				},
+				tags: ["cron", "warren"],
+				notes: null,
+			},
+		});
+		await appendIssue(seedsDir, issue);
+		const issues = await readIssues(seedsDir);
+		expect(issues).toHaveLength(1);
+		expect(issues[0]).toEqual(issue);
+		expect(issues[0]?.extensions).toEqual(issue.extensions);
+	});
 });
 
 describe("appendIssue", () => {

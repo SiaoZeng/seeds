@@ -14,6 +14,7 @@ export interface Issue {
 	plan_id?: string;
 	plan_step_index?: number;
 	requires_plan?: boolean;
+	extensions?: Record<string, unknown>;
 	createdAt: string;
 	updatedAt: string;
 	closedAt?: string;
