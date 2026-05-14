@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.5] - 2026-05-14
+
 ### Added
 - `sd plan` can adopt and release already-open seeds without duplicating them. Adoption and release are **link-only** — they never mutate the seed's `status`, `assignee`, `labels`, `priority`, `type`, or `title`; only the plan link, the `seeds:plan-backref` block in `description`, and parent↔child `blocks`/`blockedBy` edges are touched. Each command bumps `plan.revision` once. Lock order matches `sd plan submit`: outer `plans.jsonl`, inner `issues.jsonl` (mx-f29e43). All candidates are resolved in a pre-write pass — any rejection aborts the command with both JSONL files untouched. (seeds-3c89, plan pl-43ff)
   - `Step.existing_seed?: string` on the `sd plan submit` JSON schema — a step with `existing_seed: "<seed-id>"` adopts the named open seed at that index instead of spawning a fresh child. Mutually exclusive with `plan_template` on the same step. Title mismatch (`seed.title !== step.title`) emits a `⚠` warning to stderr and keeps the seed's title. (seeds-7002, seeds-24c6)
@@ -203,7 +205,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.4...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.5...HEAD
+[0.4.5]: https://github.com/jayminwest/seeds/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/jayminwest/seeds/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/jayminwest/seeds/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/jayminwest/seeds/compare/v0.4.1...v0.4.2

@@ -224,6 +224,9 @@ sd plan show <pl-id>                   Show plan with sections, children, and ne
 sd plan validate <pl-id>               Re-run validation against the current template
 sd plan list                           List plans
   --seed --status --outcome --template
+sd plan adopt <pl-id> <seed-id...>     Adopt already-open seeds into a plan (link-only; bumps revision)
+  --step <i>                           Anchor adopted seeds at a 1-based blueprint step index
+sd plan release <pl-id> <seed-id...>   Detach seeds from a plan without closing them (link-only; bumps revision)
 sd plan outcome <pl-id> --result <v>   Record success | partial | failure (--note <text>)
 sd plan review <pl-id> --by <name>     Record a reviewer (informational; not a state transition)
 ```
