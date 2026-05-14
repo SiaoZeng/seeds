@@ -49,15 +49,18 @@ export interface ChildSummary {
 	id: string;
 	title: string;
 	status: string;
+	adopted: boolean;
 }
 
 export function summarisePlanChildren(plan: Plan, issues: Issue[]): ChildSummary[] {
+	const adoptedSet = new Set(plan.adoptedChildren ?? []);
 	return plan.children.map((id) => {
 		const issue = issues.find((i) => i.id === id);
 		return {
 			id,
 			title: issue?.title ?? "(missing)",
 			status: issue?.status ?? "missing",
+			adopted: adoptedSet.has(id),
 		};
 	});
 }

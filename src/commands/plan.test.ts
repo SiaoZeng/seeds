@@ -1766,6 +1766,129 @@ describe("sd plan show", () => {
 	});
 });
 
+describe("sd plan show: (adopted) marker (seeds-a3ab / pl-43ff)", () => {
+	test("tags submit-time adopted children and leaves fresh-spawned untagged", async () => {
+		const parent = await createSeed(tmpDir, "Parent for adoption");
+		const adoptee = await createSeed(tmpDir, "Step A");
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [], existing_seed: adoptee },
+			{ title: "Fresh step", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const submit = await run(["plan", "submit", parent, "--plan", planPath, "--json"], tmpDir);
+		expect(submit.exitCode).toBe(0);
+		const submitResult = JSON.parse(submit.stdout) as { plan_id: string; children: string[] };
+
+		// Human output: adopted line carries the marker; fresh line does not.
+		const human = await run(["plan", "show", submitResult.plan_id], tmpDir);
+		expect(human.exitCode).toBe(0);
+		const adoptedLine = human.stdout.split("\n").find((l) => l.includes(adoptee));
+		const freshId = submitResult.children[1] ?? "";
+		const freshLine = human.stdout.split("\n").find((l) => l.includes(freshId));
+		expect(adoptedLine).toContain("(adopted)");
+		expect(freshLine).toBeDefined();
+		expect(freshLine).not.toContain("(adopted)");
+
+		// --json surfaces the same signal on each child and on the plan row.
+		const json = await run(["plan", "show", submitResult.plan_id, "--json"], tmpDir);
+		const parsed = JSON.parse(json.stdout) as {
+			plan: { adoptedChildren?: string[] };
+			children: Array<{ id: string; adopted: boolean }>;
+		};
+		expect(parsed.plan.adoptedChildren).toEqual([adoptee]);
+		expect(parsed.children.find((c) => c.id === adoptee)?.adopted).toBe(true);
+		expect(parsed.children.find((c) => c.id === freshId)?.adopted).toBe(false);
+	});
+
+	test("post-submit sd plan adopt tags the seed; release strips the tag", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const submit = await run(["plan", "submit", parent, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+
+		const adoptee = await createSeed(tmpDir, "Late arrival");
+		await run(["plan", "adopt", planId, adoptee], tmpDir);
+
+		const after = await run(["plan", "show", planId], tmpDir);
+		const line = after.stdout.split("\n").find((l) => l.includes(adoptee));
+		expect(line).toContain("(adopted)");
+
+		const afterJson = await run(["plan", "show", planId, "--json"], tmpDir);
+		const parsed = JSON.parse(afterJson.stdout) as {
+			plan: { adoptedChildren?: string[] };
+		};
+		expect(parsed.plan.adoptedChildren).toEqual([adoptee]);
+
+		// Release drops the tag (and the field, since no other adoptions remain).
+		await run(["plan", "release", planId, adoptee], tmpDir);
+		const released = await run(["plan", "show", planId, "--json"], tmpDir);
+		const parsedReleased = JSON.parse(released.stdout) as {
+			plan: { adoptedChildren?: string[] };
+		};
+		expect(parsedReleased.plan.adoptedChildren).toBeUndefined();
+	});
+
+	test("--overwrite preserves the (adopted) tag for surviving adopted children", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const adoptee = await createSeed(tmpDir, "Step A");
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [], existing_seed: adoptee },
+			{ title: "Fresh", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const submit = await run(["plan", "submit", parent, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(submit.stdout) as { plan_id: string }).plan_id;
+
+		// Overwrite: keep the adopted step (matched by existing_seed id), drop the
+		// fresh sibling, add a new fresh step.
+		const next = validPlanFor();
+		next.sections.steps = [
+			{ title: "Step A renamed", type: "task", priority: 2, blocks: [], existing_seed: adoptee },
+			{ title: "Brand new fresh", type: "task", priority: 2, blocks: [] },
+		];
+		const nextPath = join(tmpDir, "next.json");
+		await Bun.write(nextPath, JSON.stringify(next));
+		const overwrite = await run(
+			["plan", "submit", parent, "--plan", nextPath, "--overwrite", "--json"],
+			tmpDir,
+		);
+		expect(overwrite.exitCode).toBe(0);
+
+		const json = await run(["plan", "show", planId, "--json"], tmpDir);
+		const parsed = JSON.parse(json.stdout) as {
+			plan: { adoptedChildren?: string[] };
+			children: Array<{ id: string; adopted: boolean }>;
+		};
+		expect(parsed.plan.adoptedChildren).toEqual([adoptee]);
+		expect(parsed.children.find((c) => c.id === adoptee)?.adopted).toBe(true);
+	});
+
+	test("sd show <seed> plan block also surfaces the (adopted) tag", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const adoptee = await createSeed(tmpDir, "Step A");
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{ title: "Step A", type: "task", priority: 2, blocks: [], existing_seed: adoptee },
+			{ title: "Fresh step", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		await run(["plan", "submit", parent, "--plan", planPath, "--json"], tmpDir);
+
+		const { stdout, exitCode } = await run(["show", parent, "--format", "plain"], tmpDir);
+		expect(exitCode).toBe(0);
+		// formatIssueFull also renders a "Blocked by: ..." line that names the
+		// adoptee, so scope the search to the "Plan steps" block where each
+		// child gets its own line.
+		const planStepsIdx = stdout.indexOf("Plan steps");
+		expect(planStepsIdx).toBeGreaterThan(-1);
+		const planBlock = stdout.slice(planStepsIdx);
+		const line = planBlock.split("\n").find((l) => l.includes(adoptee));
+		expect(line).toContain("(adopted)");
+	});
+});
+
 describe("sd show <pl-id> routes to plan show (seeds-66de)", () => {
 	test("human output mirrors sd plan show", async () => {
 		const seedId = await createSeed(tmpDir, "Parent");

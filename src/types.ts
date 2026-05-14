@@ -32,6 +32,11 @@ export interface Plan {
 	revision: number;
 	sections: Record<string, unknown>;
 	children: string[];
+	// Subset of `children` that were attached via adoption (existing_seed at
+	// submit time, or `sd plan adopt` post-submit) rather than fresh-spawned by
+	// the plan. Drives the "(adopted)" tag in `sd plan show` human output and
+	// is preserved across overwrites for children that survive the rewrite.
+	adoptedChildren?: string[];
 	outcome?: PlanOutcome;
 	outcomeNote?: string;
 	reviewedBy?: string;

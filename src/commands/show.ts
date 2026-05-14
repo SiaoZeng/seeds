@@ -255,7 +255,8 @@ function renderPlanBlock(
 	} else if (children && children.length > 0) {
 		lines.push(`${muted(`Plan steps (${children.length}):`)}`);
 		for (const c of children) {
-			lines.push(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}`);
+			const tag = c.adopted ? ` ${muted("(adopted)")}` : "";
+			lines.push(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}${tag}`);
 		}
 	}
 	return `\n${lines.join("\n")}\n`;

@@ -713,6 +713,11 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				updatedAt: now,
 			};
 			if (resolvedName) plan.name = resolvedName;
+			// Track submit-time existing_seed adoptions so `sd plan show` can tag
+			// them (seeds-a3ab). Only persist when non-empty so plans that don't
+			// use adoption stay byte-identical to pre-feature output.
+			const submitAdopted = [...adoptions.values()].map((a) => a.seedId);
+			if (submitAdopted.length > 0) plan.adoptedChildren = submitAdopted;
 
 			await writeIssues(dir, [...allIssues, ...newIssues]);
 
@@ -1149,6 +1154,16 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 
 	// Update the plan row in place — single mutation per overwrite.
 	const planIdx = allPlans.findIndex((p) => p.id === existingPlan.id);
+	// Preserve prior adoptions for children that survive the overwrite, then
+	// add the freshly-adopted external seeds from this rewrite. seeds-a3ab.
+	const finalChildIdSet = new Set(finalChildIds);
+	const survivingAdopted = (existingPlan.adoptedChildren ?? []).filter((id) =>
+		finalChildIdSet.has(id),
+	);
+	const mergedAdopted: string[] = [...survivingAdopted];
+	for (const id of adoptedExternalIds) {
+		if (!mergedAdopted.includes(id)) mergedAdopted.push(id);
+	}
 	const updatedPlan: Plan = {
 		...existingPlan,
 		template: templateName,
@@ -1157,6 +1172,11 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		revision: existingPlan.revision + 1,
 		updatedAt: now,
 	};
+	if (mergedAdopted.length > 0) {
+		updatedPlan.adoptedChildren = mergedAdopted;
+	} else {
+		delete updatedPlan.adoptedChildren;
+	}
 	if (name) updatedPlan.name = name;
 	if (planIdx >= 0) allPlans[planIdx] = updatedPlan;
 
@@ -1347,7 +1367,8 @@ function renderNestedPlanHuman(entry: PlanTreeEntry, indent: string): void {
 		console.log(`${childIndent}${muted("(none)")}`);
 	} else {
 		for (const c of children) {
-			console.log(`${childIndent}${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}`);
+			const tag = c.adopted ? ` ${muted("(adopted)")}` : "";
+			console.log(`${childIndent}${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}${tag}`);
 		}
 	}
 	for (const sub of children_plans) {
@@ -1432,7 +1453,8 @@ export async function runShow(idArg: string, jsonMode: boolean): Promise<void> {
 		console.log(muted("  (none)"));
 	} else {
 		for (const c of tree.children) {
-			console.log(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}`);
+			const tag = c.adopted ? ` ${muted("(adopted)")}` : "";
+			console.log(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}${tag}`);
 		}
 	}
 
@@ -1708,9 +1730,17 @@ async function runAdopt(planIdArg: string, seedIds: string[], opts: AdoptOptions
 			for (const { seedId } of resolved) {
 				if (!nextChildren.includes(seedId)) nextChildren.push(seedId);
 			}
+			// seeds-a3ab: tag these ids on the plan so `sd plan show` renders
+			// them with "(adopted)". Always non-empty here because runAdopt
+			// requires at least one seed id.
+			const nextAdopted = [...(plan.adoptedChildren ?? [])];
+			for (const { seedId } of resolved) {
+				if (!nextAdopted.includes(seedId)) nextAdopted.push(seedId);
+			}
 			const updatedPlan: Plan = {
 				...plan,
 				children: nextChildren,
+				adoptedChildren: nextAdopted,
 				revision: plan.revision + 1,
 				updatedAt: now,
 			};
@@ -1851,12 +1881,21 @@ async function runRelease(
 			// Plan row: drop released ids from children, bump revision once per
 			// command call.
 			const nextChildren = plan.children.filter((id) => !releasedSet.has(id));
+			// seeds-a3ab: mirror children — released ids leave adoptedChildren
+			// too. Drop the field when it becomes empty so JSONL diffs stay
+			// minimal for plans that never used adoption.
+			const nextAdopted = (plan.adoptedChildren ?? []).filter((id) => !releasedSet.has(id));
 			const updatedPlan: Plan = {
 				...plan,
 				children: nextChildren,
 				revision: plan.revision + 1,
 				updatedAt: now,
 			};
+			if (nextAdopted.length > 0) {
+				updatedPlan.adoptedChildren = nextAdopted;
+			} else {
+				delete updatedPlan.adoptedChildren;
+			}
 			allPlans[planIdx] = updatedPlan;
 
 			await writeIssues(dir, allIssues);
