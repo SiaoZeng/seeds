@@ -327,6 +327,7 @@ interface SubmittedStep {
 	priority?: number;
 	blocks?: number[];
 	plan_template?: string;
+	existing_seed?: string;
 }
 
 interface SubmittedPlan {

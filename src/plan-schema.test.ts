@@ -186,6 +186,57 @@ describe("generatePlanSchema — feature template (Phase 1 round-trip)", () => {
 		expect(err?.fix).toContain("1-based");
 	});
 
+	test("accepts step with optional existing_seed (seeds-7002 / pl-43ff)", () => {
+		const validator = compilePlanTemplate(BUILTIN_FEATURE_TEMPLATE);
+		const result = validator({
+			template: "feature",
+			sections: {
+				context: "x".repeat(60),
+				approach: "pick",
+				steps: [
+					{ title: "adopt me", existing_seed: "seeds-1234", blocks: [] },
+					{ title: "fresh spawn", blocks: [] },
+				],
+				acceptance: ["ok"],
+			},
+		});
+		expect(result.valid).toBe(true);
+	});
+
+	test("rejects empty-string existing_seed", () => {
+		const validator = compilePlanTemplate(BUILTIN_FEATURE_TEMPLATE);
+		const result = validator({
+			template: "feature",
+			sections: {
+				context: "x".repeat(60),
+				approach: "pick",
+				steps: [
+					{ title: "a", existing_seed: "", blocks: [] },
+					{ title: "b", blocks: [] },
+				],
+				acceptance: ["ok"],
+			},
+		});
+		expect(result.valid).toBe(false);
+	});
+
+	test("rejects non-string existing_seed", () => {
+		const validator = compilePlanTemplate(BUILTIN_FEATURE_TEMPLATE);
+		const result = validator({
+			template: "feature",
+			sections: {
+				context: "x".repeat(60),
+				approach: "pick",
+				steps: [
+					{ title: "a", existing_seed: 42, blocks: [] },
+					{ title: "b", blocks: [] },
+				],
+				acceptance: ["ok"],
+			},
+		});
+		expect(result.valid).toBe(false);
+	});
+
 	test("flags step.blocks out-of-range", () => {
 		const validator = compilePlanTemplate(BUILTIN_FEATURE_TEMPLATE);
 		const result = validator({

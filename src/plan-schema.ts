@@ -24,6 +24,11 @@ const STEP_SCHEMA: JSONSchema = {
 		priority: { type: "integer", minimum: 0, maximum: 4 },
 		blocks: { type: "array", items: { type: "integer" } },
 		plan_template: { type: "string" },
+		// existing_seed adopts an already-open seed at submit time instead of
+		// spawning a fresh child (seeds-3c89 / pl-43ff step 1). The schema accepts
+		// any non-empty string; existence, status, and id-shape checks live in
+		// runSubmit alongside the rest of the spawn pipeline.
+		existing_seed: { type: "string", minLength: 1 },
 	},
 };
 
