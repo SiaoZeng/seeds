@@ -530,19 +530,58 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 			}
 
 			// Fresh-submit path (no existing non-draft plan).
+			//
+			// Steps may carry `existing_seed: "<id>"` to adopt an already-open
+			// seed instead of spawning a fresh child (seeds-3c89 / pl-43ff).
+			// Adoption is link-only: status/title/type/priority/assignee/labels
+			// stay with the seed; we only set plan_id, plan_step_index, prepend
+			// the backref block, and wire blocks/blockedBy edges.
+			const adoptions = validateAdoptions({ steps, seedId, allIssues });
+
 			const issueIds = new Set(allIssues.map((i) => i.id));
 			const planIds = new Set(allPlans.map((p) => p.id));
 			const planId = generateId("pl", planIds);
 
-			const newChildIds: string[] = [];
+			const finalChildIds: string[] = [];
 			for (let i = 0; i < steps.length; i++) {
-				const id = generateId(config.project, new Set([...issueIds, ...newChildIds]));
-				newChildIds.push(id);
+				const adoption = adoptions.get(i);
+				if (adoption) {
+					finalChildIds.push(adoption.seedId);
+					continue;
+				}
+				const id = generateId(config.project, new Set([...issueIds, ...finalChildIds]));
+				finalChildIds.push(id);
 			}
 
-			const newIssues: Issue[] = steps.map((step, idx) => {
-				const childId = newChildIds[idx];
-				if (!childId) throw new Error(`Internal: missing child id at index ${idx}`);
+			// Build fresh issues; mutate adopted seeds in place. Edge wiring
+			// runs in a unified pass below so adopted + fresh edges go through
+			// the same pipeline.
+			const newIssues: Issue[] = [];
+			for (let i = 0; i < steps.length; i++) {
+				const step = steps[i];
+				if (!step) continue;
+				const childId = finalChildIds[i];
+				if (!childId) continue;
+				const adoption = adoptions.get(i);
+				if (adoption) {
+					const matched = allIssues[adoption.seedAllIdx];
+					if (!matched) continue;
+					allIssues[adoption.seedAllIdx] = {
+						...matched,
+						plan_id: planId,
+						plan_step_index: i,
+						description: applyPlanBackref(matched.description, {
+							stepIndex: i,
+							planId,
+							parentSeedId: seedId,
+							parentSeedTitle: seed.title,
+							templateName,
+							approach: submitted.sections.approach,
+						}),
+						updatedAt: now,
+					};
+					continue;
+				}
 				const stepType = (step.type ?? "task") as Issue["type"];
 				const issue: Issue = {
 					id: childId,
@@ -550,9 +589,9 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 					status: "open",
 					type: stepType,
 					priority: step.priority ?? 2,
-					plan_step_index: idx,
+					plan_step_index: i,
 					description: buildPlanBackref({
-						stepIndex: idx,
+						stepIndex: i,
 						planId,
 						parentSeedId: seedId,
 						parentSeedTitle: seed.title,
@@ -572,45 +611,67 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				} else {
 					issue.plan_id = planId;
 				}
-				// PLAN_SPEC.md:248-257 — forward semantics: step i with
-				// blocks=[j] means "this step blocks step j" (step j depends
-				// on step i). `blocks` values are 1-based (seeds-185f), so
-				// translate to the 0-based child array via newChildIds[j-1].
-				const targets = step.blocks ?? [];
-				if (targets.length > 0) {
-					const blocksIds: string[] = [];
-					for (const j of targets) {
-						const target = newChildIds[j - 1];
-						if (target) blocksIds.push(target);
-					}
-					if (blocksIds.length > 0) issue.blocks = blocksIds;
-				}
-				return issue;
-			});
+				newIssues.push(issue);
+			}
 
+			// Unified edge wiring: source/target may each be fresh or adopted.
+			// Order matters — forward step.blocks edges first, then parent-seed
+			// reverse edge, so a fresh child's `blocks` reads as
+			// [...stepTargets, parentSeed] (preserves the pre-adoption shape).
+			const updateChildField = (
+				stepIdx: number,
+				field: "blocks" | "blockedBy",
+				id: string,
+			): void => {
+				const adoption = adoptions.get(stepIdx);
+				if (adoption) {
+					const m = allIssues[adoption.seedAllIdx];
+					if (!m) return;
+					const next = appendUnique(m[field], id);
+					if (next === m[field]) return;
+					allIssues[adoption.seedAllIdx] = { ...m, [field]: next, updatedAt: now };
+					return;
+				}
+				const childId = finalChildIds[stepIdx];
+				if (!childId) return;
+				const fresh = newIssues.find((n) => n.id === childId);
+				if (!fresh) return;
+				fresh[field] = appendUnique(fresh[field], id);
+			};
+
+			// PLAN_SPEC.md:248-257 — forward semantics: step i with blocks=[j]
+			// means "this step blocks step j". 1-based (seeds-185f).
 			for (let i = 0; i < steps.length; i++) {
 				const step = steps[i];
 				if (!step) continue;
-				const childId = newChildIds[i];
-				if (!childId) continue;
+				const sourceId = finalChildIds[i];
+				if (!sourceId) continue;
 				for (const j of step.blocks ?? []) {
-					const target = newIssues[j - 1];
-					if (!target) continue;
-					target.blockedBy = [...(target.blockedBy ?? []), childId];
+					const targetId = finalChildIds[j - 1];
+					if (!targetId) continue;
+					updateChildField(i, "blocks", targetId);
+					updateChildField(j - 1, "blockedBy", sourceId);
 				}
 			}
 
+			// Each child blocks the parent seed.
+			for (let i = 0; i < steps.length; i++) {
+				updateChildField(i, "blocks", seedId);
+			}
+
+			// Parent seed picks up every child as a blocker. Dedupe so an
+			// adopted seed the parent already depended on doesn't double up.
+			const dedupedBlockedBy = [...(seed.blockedBy ?? [])];
+			for (const cid of finalChildIds) {
+				if (!dedupedBlockedBy.includes(cid)) dedupedBlockedBy.push(cid);
+			}
 			const updatedSeed: Issue = {
 				...seed,
 				plan_id: planId,
-				blockedBy: [...(seed.blockedBy ?? []), ...newChildIds],
+				blockedBy: dedupedBlockedBy,
 				updatedAt: now,
 			};
 			allIssues[seedIdx] = updatedSeed;
-
-			for (const child of newIssues) {
-				child.blocks = [...(child.blocks ?? []), seedId];
-			}
 
 			const resolvedName = explicitName ?? normalizePlanName(seed.title);
 			const plan: Plan = {
@@ -620,7 +681,7 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				status: "approved",
 				revision: 1,
 				sections: submitted.sections as Record<string, unknown>,
-				children: newChildIds,
+				children: finalChildIds,
 				createdAt: now,
 				updatedAt: now,
 			};
@@ -637,7 +698,7 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 			}
 
 			createdPlanId = planId;
-			childIds = newChildIds;
+			childIds = finalChildIds;
 		});
 	});
 
@@ -725,6 +786,76 @@ function writeNextHints(opts: { planId: string; reviewable: boolean }): void {
 		lines.push(`  sd plan review ${opts.planId} --by <name>   # record approval (optional)`);
 	}
 	process.stderr.write(`${lines.join("\n")}\n`);
+}
+
+interface AdoptionEntry {
+	seedId: string;
+	seedAllIdx: number;
+}
+
+interface AdoptionValidationArgs {
+	steps: SubmittedStep[];
+	seedId: string;
+	allIssues: Issue[];
+}
+
+// Validate every step's existing_seed before any writes. Returns a
+// step-index → adoption map for the fresh-submit pipeline. Throws on the first
+// invalid candidate so the lock callback aborts cleanly.
+function validateAdoptions(args: AdoptionValidationArgs): Map<number, AdoptionEntry> {
+	const { steps, seedId, allIssues } = args;
+	const out = new Map<number, AdoptionEntry>();
+	const seen = new Set<string>();
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		if (!step?.existing_seed) continue;
+		const adoptId = step.existing_seed;
+		const label = `step ${i + 1} (${step.title})`;
+		if (step.plan_template) {
+			throw new Error(
+				`${label}: existing_seed and plan_template are mutually exclusive — adoption replaces spawning, so a sub-plan template cannot apply.`,
+			);
+		}
+		if (adoptId === seedId) {
+			throw new Error(`${label}: cannot adopt the parent seed ${seedId} into its own plan.`);
+		}
+		if (seen.has(adoptId)) {
+			throw new Error(
+				`${label}: existing_seed ${adoptId} is already adopted by an earlier step in this plan.`,
+			);
+		}
+		const idx = allIssues.findIndex((iss) => iss.id === adoptId);
+		const seed = allIssues[idx];
+		if (!seed) {
+			throw new Error(`${label}: existing_seed ${adoptId} not found.`);
+		}
+		if (seed.status === "closed") {
+			throw new Error(
+				`${label}: existing_seed ${adoptId} is closed; only open or in-progress seeds can be adopted.`,
+			);
+		}
+		if (seed.plan_id) {
+			throw new Error(
+				`${label}: existing_seed ${adoptId} is already attached to plan ${seed.plan_id}.`,
+			);
+		}
+		if (seed.title !== step.title) {
+			process.stderr.write(
+				`⚠ step ${i + 1}: existing_seed ${adoptId} title "${seed.title}" differs from step.title "${step.title}"; seed title is preserved.\n`,
+			);
+		}
+		seen.add(adoptId);
+		out.set(i, { seedId: adoptId, seedAllIdx: idx });
+	}
+	return out;
+}
+
+// Append-unique helper used by the fresh-submit edge wiring. Returns the same
+// reference when no change is needed so callers can short-circuit writes.
+function appendUnique(list: string[] | undefined, id: string): string[] {
+	const arr = list ?? [];
+	if (arr.includes(id)) return arr;
+	return [...arr, id];
 }
 
 interface OverwriteArgs {

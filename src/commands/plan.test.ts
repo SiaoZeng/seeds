@@ -407,6 +407,275 @@ describe("sd plan submit", () => {
 	});
 });
 
+describe("sd plan submit: existing_seed adoption (seeds-24c6 / pl-43ff)", () => {
+	type IssueRow = {
+		id: string;
+		title: string;
+		status: string;
+		type: string;
+		priority: number;
+		assignee?: string;
+		description?: string;
+		plan_id?: string;
+		plan_step_index?: number;
+		blocks?: string[];
+		blockedBy?: string[];
+		createdAt: string;
+		updatedAt: string;
+	};
+
+	async function readIssues(): Promise<IssueRow[]> {
+		return readJsonl<IssueRow>(join(tmpDir, ".seeds/issues.jsonl"));
+	}
+
+	function planWithAdoption(
+		adoptId: string,
+		adoptedTitle = "Step A",
+	): ReturnType<typeof validPlanFor> {
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			// Step 1 adopts the named seed; blocks step 2.
+			{ title: adoptedTitle, type: "task", priority: 2, blocks: [2], existing_seed: adoptId },
+			{ title: "Fresh step", type: "task", priority: 2, blocks: [] },
+		];
+		return plan;
+	}
+
+	test("happy path: adopts an open seed instead of spawning a fresh child", async () => {
+		const parent = await createSeed(tmpDir, "Parent for adoption");
+		const adoptee = await createSeed(tmpDir, "Step A");
+
+		const planPath = await writePlanFile(tmpDir, planWithAdoption(adoptee, "Step A"));
+		const { stdout, exitCode } = await run(
+			["plan", "submit", parent, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as {
+			success: boolean;
+			plan_id: string;
+			children: string[];
+		};
+		expect(result.success).toBe(true);
+		expect(result.children.length).toBe(2);
+		// Adopted seed reuses its own id at the step's position.
+		expect(result.children[0]).toBe(adoptee);
+
+		const issues = await readIssues();
+		const find = (id: string) => issues.find((i) => i.id === id);
+		const adopt = find(adoptee);
+		const fresh = find(result.children[1] ?? "");
+		const par = find(parent);
+
+		// Adopted seed: linked into the plan, kept open with its own metadata.
+		expect(adopt?.plan_id).toBe(result.plan_id);
+		expect(adopt?.plan_step_index).toBe(0);
+		expect(adopt?.status).toBe("open");
+		expect(adopt?.title).toBe("Step A");
+		// Forward edges: step 1 blocks step 2 (fresh) and the parent seed.
+		expect(adopt?.blocks).toEqual([result.children[1] ?? "", parent]);
+		// Description carries the backref block.
+		expect(adopt?.description ?? "").toContain("seeds:plan-backref:start");
+		expect(adopt?.description ?? "").toContain(`Step 1 of plan ${result.plan_id}`);
+
+		// Fresh sibling: blockedBy includes the adopted seed (cross-edge wiring).
+		expect(fresh?.blockedBy).toEqual([adoptee]);
+
+		// Parent: blockedBy includes both children (adopted + fresh).
+		expect(par?.plan_id).toBe(result.plan_id);
+		expect(par?.blockedBy).toEqual(result.children);
+
+		// Plan row references the adopted id in children.
+		const plans = await readJsonl<{ id: string; children: string[] }>(
+			join(tmpDir, ".seeds/plans.jsonl"),
+		);
+		expect(plans.find((p) => p.id === result.plan_id)?.children).toEqual(result.children);
+	});
+
+	test("adoption preserves existing seed fields and prepends backref to description", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		// Pre-populate the adoptee with description, assignee, priority, status.
+		const { stdout: createOut } = await run(
+			[
+				"create",
+				"--title",
+				"Pre-existing work",
+				"--type",
+				"bug",
+				"--priority",
+				"1",
+				"--assignee",
+				"alice",
+				"--description",
+				"original notes the author wrote",
+				"--json",
+			],
+			tmpDir,
+		);
+		const adoptee = (JSON.parse(createOut) as { id: string }).id;
+		await run(["update", adoptee, "--status", "in_progress"], tmpDir);
+
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{ title: "Pre-existing work", type: "task", priority: 2, blocks: [], existing_seed: adoptee },
+			{ title: "Fresh", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { exitCode } = await run(
+			["plan", "submit", parent, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+
+		const issues = await readIssues();
+		const adopt = issues.find((i) => i.id === adoptee);
+		// Link-only adoption: status, type, priority, assignee, title untouched.
+		expect(adopt?.status).toBe("in_progress");
+		expect(adopt?.type).toBe("bug");
+		expect(adopt?.priority).toBe(1);
+		expect(adopt?.assignee).toBe("alice");
+		expect(adopt?.title).toBe("Pre-existing work");
+		// Description: backref block first, then the author's original notes.
+		const desc = adopt?.description ?? "";
+		expect(desc.indexOf("seeds:plan-backref:start")).toBeLessThan(
+			desc.indexOf("original notes the author wrote"),
+		);
+		expect(desc).toContain("original notes the author wrote");
+	});
+
+	test("rejects existing_seed pointing at the parent seed", async () => {
+		const parent = await createSeed(tmpDir, "Self-adopt parent");
+		const plan = planWithAdoption(parent, "Self");
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("cannot adopt the parent seed");
+	});
+
+	test("rejects existing_seed that doesn't exist", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const plan = planWithAdoption("nope-9999");
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("not found");
+	});
+
+	test("rejects adoption of a closed seed", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const adoptee = await createSeed(tmpDir, "Step A");
+		await run(["close", adoptee], tmpDir);
+
+		const planPath = await writePlanFile(tmpDir, planWithAdoption(adoptee));
+		const { stderr, exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("is closed");
+	});
+
+	test("rejects adoption of a seed already attached to another plan", async () => {
+		const parentA = await createSeed(tmpDir, "Parent A");
+		const planAPath = await writePlanFile(tmpDir, validPlanFor());
+		const firstSubmit = await run(
+			["plan", "submit", parentA, "--plan", planAPath, "--json"],
+			tmpDir,
+		);
+		expect(firstSubmit.exitCode).toBe(0);
+		const planAChildren = (JSON.parse(firstSubmit.stdout) as { children: string[] }).children;
+		const attachedId = planAChildren[0];
+		expect(attachedId).toBeDefined();
+		if (!attachedId) return;
+
+		const parentB = await createSeed(tmpDir, "Parent B");
+		const planBPath = await writePlanFile(tmpDir, planWithAdoption(attachedId));
+		const { stderr, exitCode } = await run(
+			["plan", "submit", parentB, "--plan", planBPath],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("already attached to plan");
+	});
+
+	test("rejects two steps adopting the same seed", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const adoptee = await createSeed(tmpDir, "Shared");
+
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{ title: "First", type: "task", priority: 2, blocks: [], existing_seed: adoptee },
+			{ title: "Second", type: "task", priority: 2, blocks: [], existing_seed: adoptee },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("already adopted by an earlier step");
+	});
+
+	test("rejects existing_seed combined with plan_template", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const adoptee = await createSeed(tmpDir, "Step");
+
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{
+				title: "Step",
+				type: "task",
+				priority: 2,
+				blocks: [],
+				existing_seed: adoptee,
+				plan_template: "feature",
+			},
+			{ title: "Fresh", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("mutually exclusive");
+	});
+
+	test("warns on title mismatch but still adopts", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const adoptee = await createSeed(tmpDir, "Real seed title");
+
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{
+				title: "Plan-author title",
+				type: "task",
+				priority: 2,
+				blocks: [],
+				existing_seed: adoptee,
+			},
+			{ title: "Fresh", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(
+			["plan", "submit", parent, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		expect(stderr).toContain("differs from step.title");
+		expect(stderr).toContain("seed title is preserved");
+
+		const issues = await readIssues();
+		expect(issues.find((i) => i.id === adoptee)?.title).toBe("Real seed title");
+	});
+
+	test("validation failure (non-existent adoptee) leaves issues + plans untouched", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const before = await readIssues();
+		const plansBefore = await readJsonl<unknown>(join(tmpDir, ".seeds/plans.jsonl"));
+
+		const planPath = await writePlanFile(tmpDir, planWithAdoption("nope-1234"));
+		const { exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+
+		const after = await readIssues();
+		const plansAfter = await readJsonl<unknown>(join(tmpDir, ".seeds/plans.jsonl"));
+		expect(after.length).toBe(before.length);
+		expect(plansAfter.length).toBe(plansBefore.length);
+	});
+});
+
 describe("sd plan submit --overwrite", () => {
 	async function readIssue(id: string): Promise<{
 		id: string;
