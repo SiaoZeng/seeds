@@ -50,6 +50,24 @@ export function applyPlanBackref(existing: string | undefined, args: BackrefArgs
 	return `${block}\n\n${prior}`;
 }
 
+// Inverse of applyPlanBackref: strip the marker-delimited block so a released
+// seed loses its plan framing. Manual notes wrapping the block are preserved;
+// whitespace at the new boundary is collapsed. Returns undefined when nothing
+// but the block remained, so the caller can drop the field entirely.
+export function stripPlanBackref(existing: string | undefined): string | undefined {
+	if (existing === undefined) return undefined;
+	if (!hasBackrefMarkers(existing)) return existing;
+	const startIdx = existing.indexOf(BACKREF_START);
+	const endIdx = existing.indexOf(BACKREF_END);
+	if (startIdx === -1 || endIdx === -1) return existing;
+	const before = existing.slice(0, startIdx).replace(/\s*$/, "");
+	const after = existing.slice(endIdx + BACKREF_END.length).replace(/^\s*/, "");
+	if (before.length === 0 && after.length === 0) return undefined;
+	if (before.length === 0) return after;
+	if (after.length === 0) return before;
+	return `${before}\n\n${after}`;
+}
+
 function hasBackrefMarkers(s: string): boolean {
 	return s.includes(BACKREF_START) && s.includes(BACKREF_END);
 }

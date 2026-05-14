@@ -972,6 +972,265 @@ describe("sd plan adopt (seeds-2b93 / pl-43ff)", () => {
 	});
 });
 
+describe("sd plan release (seeds-2b8a / pl-43ff)", () => {
+	type IssueRow = {
+		id: string;
+		title: string;
+		status: string;
+		description?: string;
+		plan_id?: string;
+		plan_step_index?: number;
+		blocks?: string[];
+		blockedBy?: string[];
+		assignee?: string;
+		labels?: string[];
+		priority: number;
+		type: string;
+		updatedAt: string;
+	};
+	type PlanRow = {
+		id: string;
+		seed: string;
+		revision: number;
+		children: string[];
+		updatedAt: string;
+	};
+
+	async function readIssuesRows(): Promise<IssueRow[]> {
+		return readJsonl<IssueRow>(join(tmpDir, ".seeds/issues.jsonl"));
+	}
+	async function readPlansRows(): Promise<PlanRow[]> {
+		return readJsonl<PlanRow>(join(tmpDir, ".seeds/plans.jsonl"));
+	}
+
+	async function submitFreshPlan(): Promise<{
+		planId: string;
+		parent: string;
+		children: string[];
+	}> {
+		const parent = await createSeed(tmpDir, "Parent plan");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const { stdout, exitCode } = await run(
+			["plan", "submit", parent, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { plan_id: string; children: string[] };
+		return { planId: result.plan_id, parent, children: result.children };
+	}
+
+	test("happy path: releases an adopted seed, strips backref, unwires edges, bumps revision", async () => {
+		const { planId, parent } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "To be adopted then released");
+		await run(["plan", "adopt", planId, adoptee, "--step", "2"], tmpDir);
+
+		const { stdout, stderr, exitCode } = await run(
+			["plan", "release", planId, adoptee, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as {
+			success: boolean;
+			plan_id: string;
+			released: string[];
+			revision: number;
+		};
+		expect(result.success).toBe(true);
+		expect(result.plan_id).toBe(planId);
+		expect(result.released).toEqual([adoptee]);
+		// adopt bumped revision to 2; release bumps it to 3.
+		expect(result.revision).toBe(3);
+		expect(stderr).toBe("");
+
+		const issues = await readIssuesRows();
+		const rel = issues.find((i) => i.id === adoptee);
+		const par = issues.find((i) => i.id === parent);
+		expect(rel?.plan_id).toBeUndefined();
+		expect(rel?.plan_step_index).toBeUndefined();
+		// Seed remains open — release is link-only.
+		expect(rel?.status).toBe("open");
+		// Parent edge was the only entry in seed.blocks; it should be gone.
+		expect(rel?.blocks ?? []).not.toContain(parent);
+		// Backref block stripped.
+		const desc = rel?.description ?? "";
+		expect(desc).not.toContain("seeds:plan-backref:start");
+		expect(desc).not.toContain("seeds:plan-backref:end");
+
+		// Parent loses the adoptee from blockedBy (the original spawn children remain).
+		expect(par?.blockedBy ?? []).not.toContain(adoptee);
+
+		const plans = await readPlansRows();
+		const plan = plans.find((p) => p.id === planId);
+		expect(plan?.children ?? []).not.toContain(adoptee);
+		expect(plan?.revision).toBe(3);
+	});
+
+	test("preserves manual notes underneath the backref block when stripping", async () => {
+		const { planId } = await submitFreshPlan();
+		const { stdout: createOut } = await run(
+			[
+				"create",
+				"--title",
+				"Carries manual notes",
+				"--description",
+				"original author notes",
+				"--json",
+			],
+			tmpDir,
+		);
+		const adoptee = (JSON.parse(createOut) as { id: string }).id;
+		await run(["plan", "adopt", planId, adoptee], tmpDir);
+
+		const { exitCode } = await run(["plan", "release", planId, adoptee], tmpDir);
+		expect(exitCode).toBe(0);
+
+		const rel = (await readIssuesRows()).find((i) => i.id === adoptee);
+		expect(rel?.description).toBe("original author notes");
+	});
+
+	test("releases multiple seeds in one call; revision bumps once", async () => {
+		const { planId } = await submitFreshPlan();
+		const a = await createSeed(tmpDir, "A");
+		const b = await createSeed(tmpDir, "B");
+		await run(["plan", "adopt", planId, a, b], tmpDir);
+
+		const planBefore = (await readPlansRows()).find((p) => p.id === planId);
+		const revBefore = planBefore?.revision ?? 0;
+
+		const { stdout, exitCode } = await run(["plan", "release", planId, a, b, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { released: string[]; revision: number };
+		expect(result.released).toEqual([a, b]);
+		expect(result.revision).toBe(revBefore + 1);
+
+		const plan = (await readPlansRows()).find((p) => p.id === planId);
+		expect(plan?.children ?? []).not.toContain(a);
+		expect(plan?.children ?? []).not.toContain(b);
+	});
+
+	test("accepts the parent seed id in place of the plan id", async () => {
+		const { planId, parent } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Resolved-by-parent");
+		await run(["plan", "adopt", planId, adoptee], tmpDir);
+
+		const { stdout, exitCode } = await run(["plan", "release", parent, adoptee, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { plan_id: string };
+		expect(result.plan_id).toBe(planId);
+	});
+
+	test("releases a spawn-submitted child (not just adoptees)", async () => {
+		// Spawn children land in plan.children with plan_id set; release detaches
+		// them the same way as adoptees. Status stays open afterward.
+		const { planId, parent, children } = await submitFreshPlan();
+		const target = children[0];
+		expect(target).toBeDefined();
+		if (!target) return;
+
+		const { exitCode } = await run(["plan", "release", planId, target], tmpDir);
+		expect(exitCode).toBe(0);
+
+		const rel = (await readIssuesRows()).find((i) => i.id === target);
+		expect(rel?.plan_id).toBeUndefined();
+		expect(rel?.plan_step_index).toBeUndefined();
+		expect(rel?.status).toBe("open");
+		expect(rel?.blocks ?? []).not.toContain(parent);
+
+		const plan = (await readPlansRows()).find((p) => p.id === planId);
+		expect(plan?.children ?? []).not.toContain(target);
+	});
+
+	test("rejects a seed not attached to any plan", async () => {
+		const { planId } = await submitFreshPlan();
+		const loose = await createSeed(tmpDir, "Loose seed");
+
+		const { stderr, exitCode } = await run(["plan", "release", planId, loose], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("not attached to plan");
+	});
+
+	test("rejects a seed attached to a different plan", async () => {
+		const { planId } = await submitFreshPlan();
+		const otherParent = await createSeed(tmpDir, "Other parent");
+		const otherPath = await writePlanFile(tmpDir, validPlanFor());
+		const other = await run(["plan", "submit", otherParent, "--plan", otherPath, "--json"], tmpDir);
+		expect(other.exitCode).toBe(0);
+		const otherChildren = (JSON.parse(other.stdout) as { children: string[] }).children;
+		const foreign = otherChildren[0];
+		expect(foreign).toBeDefined();
+		if (!foreign) return;
+
+		const { stderr, exitCode } = await run(["plan", "release", planId, foreign], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("is attached to plan");
+	});
+
+	test("rejects releasing the plan's own parent seed", async () => {
+		const { planId, parent } = await submitFreshPlan();
+		const { stderr, exitCode } = await run(["plan", "release", planId, parent], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("cannot release the parent seed");
+	});
+
+	test("rejects a seed id that doesn't exist", async () => {
+		const { planId } = await submitFreshPlan();
+		const { stderr, exitCode } = await run(["plan", "release", planId, "nope-9999"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("not found");
+	});
+
+	test("rejects duplicate seed ids in args", async () => {
+		const { planId } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Once");
+		await run(["plan", "adopt", planId, adoptee], tmpDir);
+		const { stderr, exitCode } = await run(["plan", "release", planId, adoptee, adoptee], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("Duplicate seed id");
+	});
+
+	test("rejects unknown plan id", async () => {
+		const { stderr, exitCode } = await run(["plan", "release", "pl-zzzz", "seeds-1234"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("Plan not found");
+	});
+
+	test("validation failure leaves issues + plans untouched (atomic batch)", async () => {
+		const { planId } = await submitFreshPlan();
+		const adopted = await createSeed(tmpDir, "Adopted");
+		await run(["plan", "adopt", planId, adopted], tmpDir);
+		// 'loose' is not attached to any plan: trips validation.
+		const loose = await createSeed(tmpDir, "Loose");
+
+		const issuesBefore = await readIssuesRows();
+		const plansBefore = await readPlansRows();
+
+		const { exitCode } = await run(["plan", "release", planId, adopted, loose], tmpDir);
+		expect(exitCode).not.toBe(0);
+
+		const issuesAfter = await readIssuesRows();
+		const plansAfter = await readPlansRows();
+		// adopted is still attached to the plan (validation aborted before any writes).
+		expect(issuesAfter.find((i) => i.id === adopted)?.plan_id).toBe(planId);
+		expect(plansAfter.find((p) => p.id === planId)?.revision).toBe(
+			plansBefore.find((p) => p.id === planId)?.revision,
+		);
+		expect(issuesAfter.length).toBe(issuesBefore.length);
+		expect(plansAfter.length).toBe(plansBefore.length);
+	});
+
+	test("human output reports the release and the new revision", async () => {
+		const { planId } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Adoptee");
+		await run(["plan", "adopt", planId, adoptee], tmpDir);
+
+		const { stdout, exitCode } = await run(["plan", "release", planId, adoptee], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain(adoptee);
+		expect(stdout).toContain("released from plan");
+		expect(stdout).toContain("revision bumped to 3");
+	});
+});
+
 describe("sd plan submit --overwrite", () => {
 	async function readIssue(id: string): Promise<{
 		id: string;

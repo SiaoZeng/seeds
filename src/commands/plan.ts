@@ -3,7 +3,7 @@ import { Command } from "commander";
 import { findSeedsDir, loadPlanTemplates, maxPlanDepth, readConfig } from "../config.ts";
 import { generateId } from "../id.ts";
 import { accent, brand, muted, outputJson, printSuccess } from "../output.ts";
-import { applyPlanBackref, buildPlanBackref } from "../plan-backref.ts";
+import { applyPlanBackref, buildPlanBackref, stripPlanBackref } from "../plan-backref.ts";
 import { type ChildSummary, summarisePlanChildren } from "../plan-context.ts";
 import { inferDomain } from "../plan-domain.ts";
 import { enrichPriorArt, recordDecision } from "../plan-mulch.ts";
@@ -163,6 +163,16 @@ Plan name resolution:
 				});
 			},
 		);
+
+	plan
+		.command("release <plan-id> <seed-ids...>")
+		.description("Release seeds from a plan (link-only; seeds stay open; bumps plan revision)")
+		.option("--json", "Output as JSON")
+		.action(async (planIdArg: string, seedIds: string[], opts: { json?: boolean }) => {
+			await runRelease(planIdArg, seedIds, {
+				jsonMode: Boolean(opts.json),
+			});
+		});
 
 	plan
 		.command("list")
@@ -1731,6 +1741,158 @@ async function runAdopt(planIdArg: string, seedIds: string[], opts: AdoptOptions
 		printSuccess(`${accent(id)} adopted into plan ${accent(plan.id)}`);
 	}
 	printSuccess(`plan ${accent(plan.id)} revision bumped to ${plan.revision}`);
+}
+
+interface ReleaseOptions {
+	jsonMode: boolean;
+}
+
+// sd plan release <plan-id> <seed-ids...> (seeds-2b8a / pl-43ff step 5).
+// Inverse of runAdopt: detach seeds from a plan without closing them. Each
+// candidate must currently be attached to the named plan (seed.plan_id ===
+// planId). Mutation per seed: strip the seeds:plan-backref block, clear
+// plan_id + plan_step_index, drop parent.id from seed.blocks; on the parent,
+// drop seed.id from blockedBy. The plan row drops seed.id from children and
+// bumps revision once per command call. Validation runs in a single pre-write
+// pass so an invalid candidate leaves issues + plans untouched. Lock order
+// matches submit/adopt: outer plans, inner issues (mx-f29e43).
+async function runRelease(
+	planIdArg: string,
+	seedIds: string[],
+	opts: ReleaseOptions,
+): Promise<void> {
+	const dir = await findSeedsDir();
+	const planId = await resolvePlanIdArg(planIdArg, dir);
+
+	if (seedIds.length === 0) {
+		throw new Error("At least one seed id is required.");
+	}
+	const dupes = findDuplicates(seedIds);
+	if (dupes.length > 0) {
+		throw new Error(
+			`Duplicate seed id${dupes.length === 1 ? "" : "s"} in args: ${dupes.join(", ")}.`,
+		);
+	}
+
+	let finalPlan: Plan | null = null;
+	let releasedIds: string[] = [];
+
+	await withLock(plansPath(dir), async () => {
+		await withLock(issuesPath(dir), async () => {
+			const allIssues = await readIssues(dir);
+			const allPlans = await readPlans(dir);
+
+			const planIdx = allPlans.findIndex((p) => p.id === planId);
+			const plan = allPlans[planIdx];
+			if (!plan) {
+				throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
+			}
+
+			const parentIdx = allIssues.findIndex((i) => i.id === plan.seed);
+			const parentSeed = allIssues[parentIdx];
+			if (!parentSeed) {
+				throw new Error(
+					`Plan ${planId} references parent seed ${plan.seed} which no longer exists.`,
+				);
+			}
+
+			// Resolve every candidate first; any failure aborts before writes.
+			interface Resolved {
+				seedId: string;
+				idx: number;
+			}
+			const resolved: Resolved[] = [];
+			for (const seedId of seedIds) {
+				if (seedId === plan.seed) {
+					throw new Error(`cannot release the parent seed ${seedId} from its own plan ${planId}.`);
+				}
+				const idx = allIssues.findIndex((i) => i.id === seedId);
+				const seed = allIssues[idx];
+				if (!seed) {
+					throw new Error(`seed ${seedId} not found.`);
+				}
+				if (seed.plan_id !== planId) {
+					if (seed.plan_id) {
+						throw new Error(`seed ${seedId} is attached to plan ${seed.plan_id}, not ${planId}.`);
+					}
+					throw new Error(`seed ${seedId} is not attached to plan ${planId}.`);
+				}
+				resolved.push({ seedId, idx });
+			}
+
+			const now = new Date().toISOString();
+
+			// Apply all unlink mutations under the lock. plan_id and plan_step_index
+			// are set to undefined so JSON.stringify drops them from the row
+			// (matches the closedAt-on-reopen convention, mx-8b2e32).
+			for (const { idx } of resolved) {
+				const seed = allIssues[idx];
+				if (!seed) continue;
+				const updated: Issue = {
+					...seed,
+					plan_id: undefined,
+					plan_step_index: undefined,
+					description: stripPlanBackref(seed.description),
+					blocks: removeValue(seed.blocks, parentSeed.id),
+					updatedAt: now,
+				};
+				allIssues[idx] = updated;
+			}
+
+			// Parent seed: drop each released child from blockedBy.
+			const releasedSet = new Set(resolved.map((r) => r.seedId));
+			const nextParentBlockedBy = (parentSeed.blockedBy ?? []).filter((id) => !releasedSet.has(id));
+			allIssues[parentIdx] = {
+				...parentSeed,
+				blockedBy: nextParentBlockedBy,
+				updatedAt: now,
+			};
+
+			// Plan row: drop released ids from children, bump revision once per
+			// command call.
+			const nextChildren = plan.children.filter((id) => !releasedSet.has(id));
+			const updatedPlan: Plan = {
+				...plan,
+				children: nextChildren,
+				revision: plan.revision + 1,
+				updatedAt: now,
+			};
+			allPlans[planIdx] = updatedPlan;
+
+			await writeIssues(dir, allIssues);
+			await writePlans(dir, allPlans);
+
+			finalPlan = updatedPlan;
+			releasedIds = resolved.map((r) => r.seedId);
+		});
+	});
+
+	if (!finalPlan) return;
+	const plan: Plan = finalPlan;
+
+	if (opts.jsonMode) {
+		outputJson({
+			success: true,
+			command: "plan release",
+			plan_id: plan.id,
+			released: releasedIds,
+			revision: plan.revision,
+		});
+		return;
+	}
+	for (const id of releasedIds) {
+		printSuccess(`${accent(id)} released from plan ${accent(plan.id)}`);
+	}
+	printSuccess(`plan ${accent(plan.id)} revision bumped to ${plan.revision}`);
+}
+
+// removeValue: inverse of appendUnique. Returns undefined when the resulting
+// array is empty so the field gets dropped from the serialized issue.
+function removeValue(list: string[] | undefined, id: string): string[] | undefined {
+	if (!list || list.length === 0) return list;
+	const next = list.filter((x) => x !== id);
+	if (next.length === list.length) return list;
+	return next.length === 0 ? undefined : next;
 }
 
 function findDuplicates(ids: string[]): string[] {

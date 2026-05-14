@@ -1,5 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { applyPlanBackref, BACKREF_END, BACKREF_START, buildPlanBackref } from "./plan-backref.ts";
+import {
+	applyPlanBackref,
+	BACKREF_END,
+	BACKREF_START,
+	buildPlanBackref,
+	stripPlanBackref,
+} from "./plan-backref.ts";
 
 describe("buildPlanBackref", () => {
 	test("includes step index, plan id, parent seed id+title, template, approach excerpt, and link", () => {
@@ -114,5 +120,52 @@ describe("applyPlanBackref", () => {
 		const second = applyPlanBackref(first, { ...args, approach: "approach v2" });
 		expect(second).toContain("Plan approach: approach v2");
 		expect(second).toContain(manual);
+	});
+});
+
+describe("stripPlanBackref", () => {
+	const args = {
+		stepIndex: 0,
+		planId: "pl-1",
+		parentSeedId: "p-1",
+		parentSeedTitle: "t",
+		templateName: "feature",
+		approach: "approach v1",
+	};
+
+	test("returns undefined input unchanged", () => {
+		expect(stripPlanBackref(undefined)).toBeUndefined();
+	});
+
+	test("returns description unchanged when no backref markers are present", () => {
+		const manual = "Hand-written notes only.";
+		expect(stripPlanBackref(manual)).toBe(manual);
+	});
+
+	test("returns undefined when only the backref block was present", () => {
+		const only = applyPlanBackref(undefined, args);
+		expect(stripPlanBackref(only)).toBeUndefined();
+	});
+
+	test("preserves manual notes after the backref block", () => {
+		const manual = "Hand-written notes from the implementer.";
+		const combined = applyPlanBackref(manual, args);
+		const stripped = stripPlanBackref(combined);
+		expect(stripped).toBe(manual);
+		expect(stripped).not.toContain(BACKREF_START);
+		expect(stripped).not.toContain(BACKREF_END);
+	});
+
+	test("preserves manual notes before the backref block", () => {
+		const manual = "Hand-written notes from the implementer.";
+		const block = buildPlanBackref(args);
+		const combined = `${manual}\n\n${block}`;
+		expect(stripPlanBackref(combined)).toBe(manual);
+	});
+
+	test("collapses surrounding whitespace when the block sits between notes", () => {
+		const block = buildPlanBackref(args);
+		const combined = `Before notes.\n\n${block}\n\nAfter notes.`;
+		expect(stripPlanBackref(combined)).toBe("Before notes.\n\nAfter notes.");
 	});
 });
