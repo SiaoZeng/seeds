@@ -148,6 +148,23 @@ Plan name resolution:
 		});
 
 	plan
+		.command("adopt <plan-id> <seed-ids...>")
+		.description("Adopt existing open seeds into a plan (link-only; bumps plan revision)")
+		.option(
+			"--step <i>",
+			"1-based step index within the plan blueprint; sets plan_step_index on adopted seeds",
+		)
+		.option("--json", "Output as JSON")
+		.action(
+			async (planIdArg: string, seedIds: string[], opts: { step?: string; json?: boolean }) => {
+				await runAdopt(planIdArg, seedIds, {
+					step: opts.step,
+					jsonMode: Boolean(opts.json),
+				});
+			},
+		);
+
+	plan
 		.command("list")
 		.description("List plans with optional filters")
 		.option("--seed <id>", "Filter by parent seed id")
@@ -1540,6 +1557,205 @@ async function runOutcome(
 	}
 	const noteSuffix = finalPlan.outcomeNote ? ` — ${finalPlan.outcomeNote}` : "";
 	printSuccess(`plan ${accent(finalPlan.id)} outcome recorded: ${finalPlan.outcome}${noteSuffix}`);
+}
+
+interface AdoptOptions {
+	step?: string;
+	jsonMode: boolean;
+}
+
+// sd plan adopt <plan-id> <seed-ids...> [--step <i>] (seeds-2b93 / pl-43ff step 4).
+// Post-submit adoption: link existing open seeds into an active plan without
+// spawning fresh children. Adoption is link-only — status, type, priority,
+// assignee, labels stay with the seed; we only set plan_id (+ optionally
+// plan_step_index when --step is given), prepend the seeds:plan-backref block,
+// wire the seed.blocks/parent.blockedBy edges, append to plan.children, and
+// bump plan.revision. Validation runs in a single pre-write pass so an invalid
+// candidate leaves issues + plans untouched. Lock order matches submit:
+// outer plans, inner issues (mx-f29e43).
+async function runAdopt(planIdArg: string, seedIds: string[], opts: AdoptOptions): Promise<void> {
+	const dir = await findSeedsDir();
+	const planId = await resolvePlanIdArg(planIdArg, dir);
+
+	if (seedIds.length === 0) {
+		throw new Error("At least one seed id is required.");
+	}
+	const dupes = findDuplicates(seedIds);
+	if (dupes.length > 0) {
+		throw new Error(
+			`Duplicate seed id${dupes.length === 1 ? "" : "s"} in args: ${dupes.join(", ")}.`,
+		);
+	}
+
+	const stepIndex = parseStepFlag(opts.step);
+
+	let finalPlan: Plan | null = null;
+	let adoptedIds: string[] = [];
+
+	await withLock(plansPath(dir), async () => {
+		await withLock(issuesPath(dir), async () => {
+			const allIssues = await readIssues(dir);
+			const allPlans = await readPlans(dir);
+
+			const planIdx = allPlans.findIndex((p) => p.id === planId);
+			const plan = allPlans[planIdx];
+			if (!plan) {
+				throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
+			}
+
+			// --step (when given) must be in-range against the blueprint, so a
+			// typo at the CLI is caught instead of silently writing a dangling
+			// plan_step_index.
+			if (stepIndex !== undefined) {
+				const blueprintSteps = countBlueprintSteps(plan);
+				if (stepIndex < 0 || stepIndex >= blueprintSteps) {
+					throw new Error(
+						`--step ${stepIndex + 1} is out of range (plan ${planId} has ${blueprintSteps} step${blueprintSteps === 1 ? "" : "s"}).`,
+					);
+				}
+			}
+
+			const parentIdx = allIssues.findIndex((i) => i.id === plan.seed);
+			const parentSeed = allIssues[parentIdx];
+			if (!parentSeed) {
+				throw new Error(
+					`Plan ${planId} references parent seed ${plan.seed} which no longer exists.`,
+				);
+			}
+
+			// Resolve every candidate first; any failure aborts before writes.
+			interface Resolved {
+				seedId: string;
+				idx: number;
+			}
+			const resolved: Resolved[] = [];
+			for (const seedId of seedIds) {
+				if (seedId === plan.seed) {
+					throw new Error(`cannot adopt the parent seed ${seedId} into its own plan ${planId}.`);
+				}
+				const idx = allIssues.findIndex((i) => i.id === seedId);
+				const seed = allIssues[idx];
+				if (!seed) {
+					throw new Error(`seed ${seedId} not found.`);
+				}
+				if (seed.status === "closed") {
+					throw new Error(
+						`seed ${seedId} is closed; only open or in-progress seeds can be adopted.`,
+					);
+				}
+				if (seed.plan_id) {
+					throw new Error(
+						`seed ${seedId} is already attached to plan ${seed.plan_id}; release it first.`,
+					);
+				}
+				resolved.push({ seedId, idx });
+			}
+
+			const now = new Date().toISOString();
+			const templateName = plan.template;
+			const approach = (plan.sections as { approach?: unknown }).approach;
+
+			// Apply all link mutations under the lock.
+			for (const { idx } of resolved) {
+				const seed = allIssues[idx];
+				if (!seed) continue;
+				const updated: Issue = {
+					...seed,
+					plan_id: planId,
+					description: applyPlanBackref(seed.description, {
+						stepIndex,
+						planId,
+						parentSeedId: parentSeed.id,
+						parentSeedTitle: parentSeed.title,
+						templateName,
+						approach,
+					}),
+					blocks: appendUnique(seed.blocks, parentSeed.id),
+					updatedAt: now,
+				};
+				if (stepIndex !== undefined) {
+					updated.plan_step_index = stepIndex;
+				}
+				allIssues[idx] = updated;
+			}
+
+			// Parent seed: blockedBy gains each adopted child (deduped). The
+			// parent's plan_id is already set on submit; we don't touch it.
+			const updatedParentBlockedBy = [...(parentSeed.blockedBy ?? [])];
+			for (const { seedId } of resolved) {
+				if (!updatedParentBlockedBy.includes(seedId)) updatedParentBlockedBy.push(seedId);
+			}
+			allIssues[parentIdx] = {
+				...parentSeed,
+				blockedBy: updatedParentBlockedBy,
+				updatedAt: now,
+			};
+
+			// Plan row: append adopted ids to children (deduped — the
+			// already-attached check above already rejects re-adoption, so this
+			// is belt-and-suspenders), bump revision once per command call.
+			const nextChildren = [...plan.children];
+			for (const { seedId } of resolved) {
+				if (!nextChildren.includes(seedId)) nextChildren.push(seedId);
+			}
+			const updatedPlan: Plan = {
+				...plan,
+				children: nextChildren,
+				revision: plan.revision + 1,
+				updatedAt: now,
+			};
+			allPlans[planIdx] = updatedPlan;
+
+			await writeIssues(dir, allIssues);
+			await writePlans(dir, allPlans);
+
+			finalPlan = updatedPlan;
+			adoptedIds = resolved.map((r) => r.seedId);
+		});
+	});
+
+	if (!finalPlan) return;
+	const plan: Plan = finalPlan;
+
+	if (opts.jsonMode) {
+		outputJson({
+			success: true,
+			command: "plan adopt",
+			plan_id: plan.id,
+			adopted: adoptedIds,
+			revision: plan.revision,
+		});
+		return;
+	}
+	for (const id of adoptedIds) {
+		printSuccess(`${accent(id)} adopted into plan ${accent(plan.id)}`);
+	}
+	printSuccess(`plan ${accent(plan.id)} revision bumped to ${plan.revision}`);
+}
+
+function findDuplicates(ids: string[]): string[] {
+	const seen = new Set<string>();
+	const dupes = new Set<string>();
+	for (const id of ids) {
+		if (seen.has(id)) dupes.add(id);
+		seen.add(id);
+	}
+	return [...dupes];
+}
+
+// --step is 1-based on the CLI (mx-cf60e9) and stored 0-based internally.
+function parseStepFlag(raw: string | undefined): number | undefined {
+	if (raw === undefined) return undefined;
+	const n = Number.parseInt(raw, 10);
+	if (!Number.isInteger(n) || String(n) !== raw.trim() || n < 1) {
+		throw new Error(`--step must be a positive integer (got: ${raw}).`);
+	}
+	return n - 1;
+}
+
+function countBlueprintSteps(plan: Plan): number {
+	const steps = (plan.sections as { steps?: unknown }).steps;
+	return Array.isArray(steps) ? steps.length : 0;
 }
 
 async function runReview(idArg: string, by: string, jsonMode: boolean): Promise<void> {

@@ -676,6 +676,302 @@ describe("sd plan submit: existing_seed adoption (seeds-24c6 / pl-43ff)", () => 
 	});
 });
 
+describe("sd plan adopt (seeds-2b93 / pl-43ff)", () => {
+	type IssueRow = {
+		id: string;
+		title: string;
+		status: string;
+		description?: string;
+		plan_id?: string;
+		plan_step_index?: number;
+		blocks?: string[];
+		blockedBy?: string[];
+		assignee?: string;
+		labels?: string[];
+		priority: number;
+		type: string;
+		updatedAt: string;
+	};
+	type PlanRow = {
+		id: string;
+		seed: string;
+		revision: number;
+		children: string[];
+		updatedAt: string;
+	};
+
+	async function readIssuesRows(): Promise<IssueRow[]> {
+		return readJsonl<IssueRow>(join(tmpDir, ".seeds/issues.jsonl"));
+	}
+	async function readPlansRows(): Promise<PlanRow[]> {
+		return readJsonl<PlanRow>(join(tmpDir, ".seeds/plans.jsonl"));
+	}
+
+	async function submitFreshPlan(): Promise<{
+		planId: string;
+		parent: string;
+		children: string[];
+	}> {
+		const parent = await createSeed(tmpDir, "Parent plan");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const { stdout, exitCode } = await run(
+			["plan", "submit", parent, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { plan_id: string; children: string[] };
+		return { planId: result.plan_id, parent, children: result.children };
+	}
+
+	test("happy path: adopts an open seed, wires edges, bumps revision", async () => {
+		const { planId, parent } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Extra work to fold in");
+
+		const { stdout, stderr, exitCode } = await run(
+			["plan", "adopt", planId, adoptee, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as {
+			success: boolean;
+			plan_id: string;
+			adopted: string[];
+			revision: number;
+		};
+		expect(result.success).toBe(true);
+		expect(result.plan_id).toBe(planId);
+		expect(result.adopted).toEqual([adoptee]);
+		expect(result.revision).toBe(2);
+		expect(stderr).toBe("");
+
+		const issues = await readIssuesRows();
+		const adopt = issues.find((i) => i.id === adoptee);
+		const par = issues.find((i) => i.id === parent);
+		expect(adopt?.plan_id).toBe(planId);
+		// No --step provided: plan_step_index is left undefined.
+		expect(adopt?.plan_step_index).toBeUndefined();
+		expect(adopt?.status).toBe("open");
+		expect(adopt?.blocks).toEqual([parent]);
+		// Description carries the loose-adoption backref variant.
+		expect(adopt?.description ?? "").toContain("seeds:plan-backref:start");
+		expect(adopt?.description ?? "").toContain(`Adopted into plan ${planId}.`);
+		expect(adopt?.description ?? "").toContain(`Parent seed: ${parent}`);
+
+		// Parent: blockedBy gains adopted child (alongside the original spawn-children).
+		expect(par?.blockedBy ?? []).toContain(adoptee);
+
+		const plans = await readPlansRows();
+		const plan = plans.find((p) => p.id === planId);
+		expect(plan?.children).toContain(adoptee);
+		expect(plan?.revision).toBe(2);
+	});
+
+	test("--step sets plan_step_index (1-based input, 0-based stored) and the step backref", async () => {
+		const { planId, parent } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Sibling for step 2");
+
+		const { exitCode } = await run(
+			["plan", "adopt", planId, adoptee, "--step", "2", "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+
+		const adopt = (await readIssuesRows()).find((i) => i.id === adoptee);
+		expect(adopt?.plan_step_index).toBe(1);
+		expect(adopt?.description ?? "").toContain(`Step 2 of plan ${planId}.`);
+		expect(adopt?.description ?? "").not.toContain("Adopted into plan");
+		expect(adopt?.blocks).toEqual([parent]);
+	});
+
+	test("adopts multiple seeds in one call; revision bumps once", async () => {
+		const { planId } = await submitFreshPlan();
+		const a = await createSeed(tmpDir, "Adoptee A");
+		const b = await createSeed(tmpDir, "Adoptee B");
+
+		const { stdout, exitCode } = await run(["plan", "adopt", planId, a, b, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { adopted: string[]; revision: number };
+		expect(result.adopted).toEqual([a, b]);
+		expect(result.revision).toBe(2);
+
+		const plans = await readPlansRows();
+		const plan = plans.find((p) => p.id === planId);
+		expect(plan?.children).toContain(a);
+		expect(plan?.children).toContain(b);
+	});
+
+	test("accepts the parent seed id in place of the plan id", async () => {
+		const { planId, parent } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Late-arriving work");
+
+		const { stdout, exitCode } = await run(["plan", "adopt", parent, adoptee, "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { plan_id: string };
+		expect(result.plan_id).toBe(planId);
+	});
+
+	test("preserves the adoptee's status, priority, type, assignee, and labels (link-only)", async () => {
+		const { planId } = await submitFreshPlan();
+		const { stdout: createOut } = await run(
+			[
+				"create",
+				"--title",
+				"Pre-existing",
+				"--type",
+				"bug",
+				"--priority",
+				"1",
+				"--assignee",
+				"alice",
+				"--description",
+				"original author notes",
+				"--json",
+			],
+			tmpDir,
+		);
+		const adoptee = (JSON.parse(createOut) as { id: string }).id;
+		await run(["update", adoptee, "--status", "in_progress"], tmpDir);
+		await run(["label", "add", adoptee, "needs-design"], tmpDir);
+
+		const { exitCode } = await run(["plan", "adopt", planId, adoptee], tmpDir);
+		expect(exitCode).toBe(0);
+
+		const adopt = (await readIssuesRows()).find((i) => i.id === adoptee);
+		expect(adopt?.status).toBe("in_progress");
+		expect(adopt?.type).toBe("bug");
+		expect(adopt?.priority).toBe(1);
+		expect(adopt?.assignee).toBe("alice");
+		expect(adopt?.labels).toEqual(["needs-design"]);
+		// Backref prepended; author's notes preserved underneath.
+		const desc = adopt?.description ?? "";
+		expect(desc.indexOf("seeds:plan-backref:start")).toBeLessThan(
+			desc.indexOf("original author notes"),
+		);
+		expect(desc).toContain("original author notes");
+	});
+
+	test("rejects adoption of a closed seed", async () => {
+		const { planId } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Closed before adoption");
+		await run(["close", adoptee], tmpDir);
+
+		const { stderr, exitCode } = await run(["plan", "adopt", planId, adoptee], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("is closed");
+	});
+
+	test("rejects adoption of a seed already attached to another plan", async () => {
+		const { planId, children } = await submitFreshPlan();
+		const attached = children[0];
+		expect(attached).toBeDefined();
+		if (!attached) return;
+
+		// Spin up a second plan; try to steal one of its children into the first.
+		const otherParent = await createSeed(tmpDir, "Other parent");
+		const otherPath = await writePlanFile(tmpDir, validPlanFor());
+		const second = await run(
+			["plan", "submit", otherParent, "--plan", otherPath, "--json"],
+			tmpDir,
+		);
+		expect(second.exitCode).toBe(0);
+		const secondChildren = (JSON.parse(second.stdout) as { children: string[] }).children;
+		const stolen = secondChildren[0];
+		expect(stolen).toBeDefined();
+		if (!stolen) return;
+
+		const { stderr, exitCode } = await run(["plan", "adopt", planId, stolen], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("already attached to plan");
+	});
+
+	test("rejects adoption of the plan's own parent seed", async () => {
+		const { planId, parent } = await submitFreshPlan();
+		const { stderr, exitCode } = await run(["plan", "adopt", planId, parent], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("cannot adopt the parent seed");
+	});
+
+	test("rejects a seed id that doesn't exist", async () => {
+		const { planId } = await submitFreshPlan();
+		const { stderr, exitCode } = await run(["plan", "adopt", planId, "nope-9999"], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("not found");
+	});
+
+	test("rejects duplicate seed ids in args", async () => {
+		const { planId } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Once");
+		const { stderr, exitCode } = await run(["plan", "adopt", planId, adoptee, adoptee], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("Duplicate seed id");
+	});
+
+	test("rejects --step out of range", async () => {
+		const { planId } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Adoptee");
+		// validPlanFor has 4 steps; --step 5 is out of range.
+		const { stderr, exitCode } = await run(
+			["plan", "adopt", planId, adoptee, "--step", "5"],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("out of range");
+	});
+
+	test("rejects non-positive --step values", async () => {
+		const { planId } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Adoptee");
+		const { stderr, exitCode } = await run(
+			["plan", "adopt", planId, adoptee, "--step", "0"],
+			tmpDir,
+		);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("positive integer");
+	});
+
+	test("rejects unknown plan id", async () => {
+		const adoptee = await createSeed(tmpDir, "Adoptee");
+		const { stderr, exitCode } = await run(["plan", "adopt", "pl-zzzz", adoptee], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("Plan not found");
+	});
+
+	test("validation failure leaves issues + plans untouched (atomic batch)", async () => {
+		const { planId } = await submitFreshPlan();
+		const good = await createSeed(tmpDir, "Would-be adopted");
+		const closed = await createSeed(tmpDir, "Closed sibling");
+		await run(["close", closed], tmpDir);
+
+		const issuesBefore = await readIssuesRows();
+		const plansBefore = await readPlansRows();
+
+		// Mix valid + invalid: the closed one trips validation, so neither should land.
+		const { exitCode } = await run(["plan", "adopt", planId, good, closed], tmpDir);
+		expect(exitCode).not.toBe(0);
+
+		const issuesAfter = await readIssuesRows();
+		const plansAfter = await readPlansRows();
+		// good's plan_id stays undefined (validation aborted before any writes).
+		expect(issuesAfter.find((i) => i.id === good)?.plan_id).toBeUndefined();
+		// Plan revision unchanged.
+		expect(plansAfter.find((p) => p.id === planId)?.revision).toBe(
+			plansBefore.find((p) => p.id === planId)?.revision,
+		);
+		expect(issuesAfter.length).toBe(issuesBefore.length);
+		expect(plansAfter.length).toBe(plansBefore.length);
+	});
+
+	test("human output reports the adoption and the new revision", async () => {
+		const { planId } = await submitFreshPlan();
+		const adoptee = await createSeed(tmpDir, "Adoptee");
+		const { stdout, exitCode } = await run(["plan", "adopt", planId, adoptee], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain(adoptee);
+		expect(stdout).toContain("adopted into plan");
+		expect(stdout).toContain("revision bumped to 2");
+	});
+});
+
 describe("sd plan submit --overwrite", () => {
 	async function readIssue(id: string): Promise<{
 		id: string;

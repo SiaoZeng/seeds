@@ -8,7 +8,9 @@ export const BACKREF_END = "<!-- seeds:plan-backref:end -->";
 const APPROACH_EXCERPT_MAX = 240;
 
 export interface BackrefArgs {
-	stepIndex: number;
+	// 0-based step index in plan.sections.steps. Omit for loose adoptions
+	// (sd plan adopt without --step) where the seed has no step anchor.
+	stepIndex?: number;
 	planId: string;
 	parentSeedId: string;
 	parentSeedTitle: string;
@@ -17,9 +19,12 @@ export interface BackrefArgs {
 }
 
 export function buildPlanBackref(args: BackrefArgs): string {
-	const stepNum = args.stepIndex + 1;
 	const lines: string[] = [];
-	lines.push(`Step ${stepNum} of plan ${args.planId}.`);
+	if (args.stepIndex !== undefined) {
+		lines.push(`Step ${args.stepIndex + 1} of plan ${args.planId}.`);
+	} else {
+		lines.push(`Adopted into plan ${args.planId}.`);
+	}
 	lines.push("");
 	lines.push(`Parent seed: ${args.parentSeedId} — ${args.parentSeedTitle}`);
 	lines.push(`Plan template: ${args.templateName}`);
