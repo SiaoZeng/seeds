@@ -85,9 +85,10 @@ function validPlanFor(): {
 			alternatives: [],
 			steps: [
 				// Forward semantics: step i with blocks: [j] means step i blocks step j.
-				{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+				// Indices are 1-based (seeds-185f) — step 1 is the first step.
+				{ title: "Step A", type: "task", priority: 2, blocks: [2] }, // A blocks B
 				{ title: "Step B", type: "task", priority: 2, blocks: [] },
-				{ title: "Step C", type: "task", priority: 2, blocks: [3] }, // C blocks D
+				{ title: "Step C", type: "task", priority: 2, blocks: [4] }, // C blocks D
 				{ title: "Step D", type: "task", priority: 2, blocks: [] },
 			],
 			risks: [],
@@ -524,7 +525,7 @@ describe("sd plan submit --overwrite", () => {
 		// Drop the last two steps in the new plan
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+			{ title: "Step A", type: "task", priority: 2, blocks: [2] }, // A blocks B
 			{ title: "Step B", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);
@@ -564,8 +565,8 @@ describe("sd plan submit --overwrite", () => {
 
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
-			{ title: "Step B", type: "task", priority: 2, blocks: [2] }, // B blocks BNS
+			{ title: "Step A", type: "task", priority: 2, blocks: [2] }, // A blocks B
+			{ title: "Step B", type: "task", priority: 2, blocks: [3] }, // B blocks BNS
 			{ title: "Brand New Step", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);
@@ -612,7 +613,7 @@ describe("sd plan submit --overwrite", () => {
 		// New plan keeps Step A & Step B (matched by title), drops C and D.
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
+			{ title: "Step A", type: "task", priority: 2, blocks: [2] }, // A blocks B
 			{ title: "Step B", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);
@@ -773,7 +774,7 @@ describe("sd plan show: structured list rendering (seeds-7d17)", () => {
 				approach: "Render structured steps in a human-readable way.",
 				alternatives: [],
 				steps: [
-					{ title: "Blocking step", type: "task", priority: 2, blocks: [1] },
+					{ title: "Blocking step", type: "task", priority: 2, blocks: [2] },
 					{ title: "Plain step", type: "task", priority: 2, blocks: [] },
 					{
 						title: "Pre-planned step",
@@ -940,7 +941,7 @@ describe("sd plan show: recursive nesting (Phase 4 / PLAN_SPEC.md:340, 425, 430)
 				type: "epic",
 				priority: 1,
 				plan_template: "feature",
-				blocks: [1],
+				blocks: [2],
 			},
 			{ title: "Plain task", type: "task", priority: 2, blocks: [] },
 		];
@@ -1191,7 +1192,7 @@ describe("sd plan submit: step.plan_template (Phase 4 / PLAN_SPEC.md:329-342)", 
 				type: "epic",
 				priority: 1,
 				plan_template: "feature",
-				blocks: [1],
+				blocks: [2],
 			},
 			{ title: "Wire UI", type: "task", priority: 2, blocks: [] },
 		];
@@ -1675,7 +1676,7 @@ function validBugPlan(): { template: string; sections: Record<string, unknown> }
 			root_cause: VALID_ROOT_CAUSE,
 			approach: "Normalize both sides to lowercase before comparing.",
 			steps: [
-				{ title: "Add lowercasing helper", type: "task", priority: 2, blocks: [1] },
+				{ title: "Add lowercasing helper", type: "task", priority: 2, blocks: [2] },
 				{ title: "Wire through caller", type: "task", priority: 2, blocks: [] },
 			],
 			acceptance: ["Regression test passes on Linux"],
@@ -1997,8 +1998,8 @@ describe("sd plan submit: child backref block (seeds-76af)", () => {
 
 		const v2 = validPlanFor();
 		v2.sections.steps = [
-			{ title: "Step A", type: "task", priority: 2, blocks: [1] }, // A blocks B
-			{ title: "Step B", type: "task", priority: 2, blocks: [2] }, // B blocks BNS
+			{ title: "Step A", type: "task", priority: 2, blocks: [2] }, // A blocks B
+			{ title: "Step B", type: "task", priority: 2, blocks: [3] }, // B blocks BNS
 			{ title: "Brand New Step", type: "task", priority: 2, blocks: [] },
 		];
 		const planPath2 = await writePlanFile(tmpDir, v2);

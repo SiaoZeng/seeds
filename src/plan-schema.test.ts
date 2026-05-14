@@ -42,7 +42,7 @@ describe("generatePlanSchema — feature template (Phase 1 round-trip)", () => {
 				context: "x".repeat(60),
 				approach: "Pick the right tool",
 				steps: [
-					{ title: "step a", blocks: [1] },
+					{ title: "step a", blocks: [2] },
 					{ title: "step b", blocks: [] },
 				],
 				acceptance: ["it works"],
@@ -153,7 +153,8 @@ describe("generatePlanSchema — feature template (Phase 1 round-trip)", () => {
 				context: "x".repeat(60),
 				approach: "pick",
 				steps: [
-					{ title: "a", blocks: [0] },
+					// step 1 listing 1 in its own blocks is a self-reference
+					{ title: "a", blocks: [1] },
 					{ title: "b", blocks: [] },
 				],
 				acceptance: ["ok"],
@@ -162,6 +163,27 @@ describe("generatePlanSchema — feature template (Phase 1 round-trip)", () => {
 		expect(result.valid).toBe(false);
 		if (result.valid) return;
 		expect(result.diff.errors.some((e) => e.code === "self-reference")).toBe(true);
+	});
+
+	test("rejects blocks: [0] with a 1-based out-of-range error (seeds-185f)", () => {
+		const validator = compilePlanTemplate(BUILTIN_FEATURE_TEMPLATE);
+		const result = validator({
+			template: "feature",
+			sections: {
+				context: "x".repeat(60),
+				approach: "pick",
+				steps: [
+					{ title: "a", blocks: [0] },
+					{ title: "b", blocks: [] },
+				],
+				acceptance: ["ok"],
+			},
+		});
+		expect(result.valid).toBe(false);
+		if (result.valid) return;
+		const err = result.diff.errors.find((e) => e.code === "out-of-range");
+		expect(err).toBeDefined();
+		expect(err?.fix).toContain("1-based");
 	});
 
 	test("flags step.blocks out-of-range", () => {

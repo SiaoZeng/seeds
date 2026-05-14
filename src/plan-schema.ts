@@ -22,7 +22,7 @@ const STEP_SCHEMA: JSONSchema = {
 		title: { type: "string", minLength: 1 },
 		type: { type: "string", enum: ["task", "bug", "feature", "epic"] },
 		priority: { type: "integer", minimum: 0, maximum: 4 },
-		blocks: { type: "array", items: { type: "integer", minimum: 0 } },
+		blocks: { type: "array", items: { type: "integer" } },
 		plan_template: { type: "string" },
 	},
 };
@@ -110,6 +110,9 @@ function findStepsSectionKey(template: PlanTemplate): string | undefined {
 	return undefined;
 }
 
+// step.blocks values are 1-based: step 1 is the first step, step N is the
+// last (seeds-185f). Internal `plan_step_index` on spawned children stays
+// 0-based — it's a code-level back-link, not author-facing.
 function validateStepBlocks(data: unknown, sectionKey: string): ErrorEntry[] {
 	const sections = (data as { sections?: unknown })?.sections;
 	if (!sections || typeof sections !== "object") return [];
@@ -122,19 +125,20 @@ function validateStepBlocks(data: unknown, sectionKey: string): ErrorEntry[] {
 		if (!step || typeof step !== "object") continue;
 		const blocks = (step as { blocks?: unknown }).blocks;
 		if (!Array.isArray(blocks)) continue;
+		const stepLabel = i + 1;
 		for (const b of blocks) {
 			if (typeof b !== "number" || !Number.isInteger(b)) continue;
-			if (b === i) {
+			if (b === stepLabel) {
 				errors.push({
 					path: `sections.${sectionKey}.${i}.blocks`,
 					code: "self-reference",
-					fix: `step ${i} cannot block itself; remove ${b} from blocks`,
+					fix: `step ${stepLabel} cannot block itself; remove ${b} from blocks`,
 				});
-			} else if (b < 0 || b >= len) {
+			} else if (b < 1 || b > len) {
 				errors.push({
 					path: `sections.${sectionKey}.${i}.blocks`,
 					code: "out-of-range",
-					fix: `step index ${b} is out of range (have ${len} step${len === 1 ? "" : "s"})`,
+					fix: `step index ${b} is out of range (step indices are 1-based; valid range 1..${len})`,
 				});
 			}
 		}

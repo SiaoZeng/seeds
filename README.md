@@ -174,7 +174,7 @@ Returns a structured prompt request the LLM can fill in:
 
 ### 2. Submit the filled plan
 
-The LLM produces a submission JSON in the same shape, with concrete content. Each `steps[]` entry becomes a child seed; `blocks: [step_index]` translates into seed-level `blockedBy` dependencies.
+The LLM produces a submission JSON in the same shape, with concrete content. Each `steps[]` entry becomes a child seed; `blocks: [step_index]` translates into seed-level `blockedBy` dependencies. Step indices in `blocks` are 1-based (step 1 is the first step).
 
 ```json
 {
@@ -184,9 +184,9 @@ The LLM produces a submission JSON in the same shape, with concrete content. Eac
     "context": "...",
     "approach": "Use AJV to validate template-driven plans, mirroring mulch's custom_types pipeline.",
     "steps": [
-      { "title": "Schema generator", "type": "task", "priority": 1, "blocks": [] },
-      { "title": "Submit command", "type": "task", "priority": 1, "blocks": [0] },
-      { "title": "Show command",   "type": "task", "priority": 2, "blocks": [0] }
+      { "title": "Schema generator", "type": "task", "priority": 1, "blocks": [2, 3] },
+      { "title": "Submit command", "type": "task", "priority": 1, "blocks": [] },
+      { "title": "Show command",   "type": "task", "priority": 2, "blocks": [] }
     ],
     "acceptance": ["End-to-end submit + show works"]
   }

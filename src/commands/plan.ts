@@ -224,7 +224,7 @@ interface PlanRequest {
 }
 
 const INSTRUCTIONS =
-	'Fill every section. Required fields are marked. Use prior_art entries to ground decisions. Reply with JSON shaped { "template": "<name>", "name": "<short label>", "sections": { "<section-name>": <value>, ... } } — drop the plan_request wrapper, and sections in your reply is an object keyed by name (not the array of section metadata above). The top-level `name` field is an optional short human-readable label (e.g. "Schema-driven config editor"); if you omit it, sd plan submit derives one from the parent seed title. In each step, `blocks` lists step indices that this step blocks (i.e. that depend on this step finishing first); leave empty if nothing depends on it.';
+	'Fill every section. Required fields are marked. Use prior_art entries to ground decisions. Reply with JSON shaped { "template": "<name>", "name": "<short label>", "sections": { "<section-name>": <value>, ... } } — drop the plan_request wrapper, and sections in your reply is an object keyed by name (not the array of section metadata above). The top-level `name` field is an optional short human-readable label (e.g. "Schema-driven config editor"); if you omit it, sd plan submit derives one from the parent seed title. In each step, `blocks` lists 1-based step indices that this step blocks (step 1 is the first step, step N is the last); e.g. step 1 with `blocks: [2]` means step 1 must finish before step 2 starts. Leave empty if nothing depends on it.';
 
 function buildPlanRequest(
 	seedId: string,
@@ -371,7 +371,7 @@ function validatePlanTemplateRefs(
 		if (!ref) continue;
 		if (!templates[ref]) {
 			const available = Object.keys(templates).join(", ");
-			return `step ${i} (${step.title}): plan_template '${ref}' is not defined. Available: ${available}. Add it under plan_templates: in .seeds/config.yaml.`;
+			return `step ${i + 1} (${step.title}): plan_template '${ref}' is not defined. Available: ${available}. Add it under plan_templates: in .seeds/config.yaml.`;
 		}
 	}
 	return null;
@@ -573,12 +573,13 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				}
 				// PLAN_SPEC.md:248-257 — forward semantics: step i with
 				// blocks=[j] means "this step blocks step j" (step j depends
-				// on step i). Translate to child i.blocks containing child j.
+				// on step i). `blocks` values are 1-based (seeds-185f), so
+				// translate to the 0-based child array via newChildIds[j-1].
 				const targets = step.blocks ?? [];
 				if (targets.length > 0) {
 					const blocksIds: string[] = [];
 					for (const j of targets) {
-						const target = newChildIds[j];
+						const target = newChildIds[j - 1];
 						if (target) blocksIds.push(target);
 					}
 					if (blocksIds.length > 0) issue.blocks = blocksIds;
@@ -592,7 +593,7 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				const childId = newChildIds[i];
 				if (!childId) continue;
 				for (const j of step.blocks ?? []) {
-					const target = newIssues[j];
+					const target = newIssues[j - 1];
 					if (!target) continue;
 					target.blockedBy = [...(target.blockedBy ?? []), childId];
 				}
@@ -883,8 +884,9 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		if (!step) continue;
 		const sourceId = finalChildIds[i];
 		if (!sourceId) continue;
+		// step.blocks is 1-based (seeds-185f); translate to 0-based.
 		for (const j of step.blocks ?? []) {
-			const targetId = finalChildIds[j];
+			const targetId = finalChildIds[j - 1];
 			if (!targetId) continue;
 			// Forward edge on source.
 			const newSource = newIssues.find((ni) => ni.id === sourceId);
@@ -1058,8 +1060,9 @@ function renderStepEntry(marker: string, entry: Record<string, unknown>): void {
 	const subIndent = " ".repeat(marker.length + 1);
 	const blocks = entry.blocks;
 	if (Array.isArray(blocks) && blocks.length > 0) {
+		// blocks values are stored 1-based (seeds-185f), so render verbatim.
 		const labels = blocks
-			.map((b) => (typeof b === "number" ? String(b + 1) : JSON.stringify(b)))
+			.map((b) => (typeof b === "number" ? String(b) : JSON.stringify(b)))
 			.join(", ");
 		console.log(`${subIndent}${muted(`blocks: ${labels}`)}`);
 	}

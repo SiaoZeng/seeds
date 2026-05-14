@@ -245,7 +245,7 @@ The LLM never has to re-run `sd plan prompt`; the failure response carries enoug
       { "name": "Build custom JWT layer", "rejected_because": "Reinventing wheel; OAuth library is mature." }
     ],
     "steps": [
-      { "title": "Add OAuth provider config", "type": "task", "priority": 2, "blocks": [1] },
+      { "title": "Add OAuth provider config", "type": "task", "priority": 2, "blocks": [2] },
       { "title": "Wire callback handler", "type": "task", "priority": 2, "blocks": [] }
     ],
     "risks": ["Token refresh race (mx-902)"],
@@ -254,7 +254,7 @@ The LLM never has to re-run `sd plan prompt`; the failure response carries enoug
 }
 ```
 
-The `blocks: [1]` syntax in `steps` references step indices and uses forward semantics: step 0 with `blocks: [1]` means step 0 *blocks* step 1 (step 1 depends on step 0 finishing first). On submit, indices are translated into spawned-seed IDs: each child gets the targets in its `blocks` field, and each target gets the blocking step's ID appended to its `blockedBy` field. Leave `blocks: []` for steps nothing depends on.
+The `blocks: [2]` syntax in `steps` references **1-based** step indices (step 1 is the first step, step N is the last) and uses forward semantics: step 1 with `blocks: [2]` means step 1 *blocks* step 2 (step 2 depends on step 1 finishing first). On submit, indices are translated into spawned-seed IDs: each child gets the targets in its `blocks` field, and each target gets the blocking step's ID appended to its `blockedBy` field. Leave `blocks: []` for steps nothing depends on. Note: the internal `plan_step_index` field stored on each spawned child seed remains 0-based — it's a code-level back-link, not author-facing.
 
 ## Plan Templates (Customization)
 
@@ -276,7 +276,7 @@ Templates are declared in `.seeds/config.yaml` under `plan_templates:`. Each tem
 | ------------- | ---------------------------------- | ----------------------------------------------------------- |
 | `text`        | string                             | `min_length` optional.                                      |
 | `list`        | array                              | `item: text` or `item: { ...object spec... }`. `min` opt.   |
-| `steps`       | array of step objects              | Spawns child seeds 1:1. Step is `{title, type, priority, blocks: [step_index], plan_template?}`. |
+| `steps`       | array of step objects              | Spawns child seeds 1:1. Step is `{title, type, priority, blocks: [step_index], plan_template?}`. `blocks` uses 1-based step indices. |
 | object spec   | nested record of named fields      | Each field has its own `kind` recursively.                  |
 
 A custom template:
@@ -364,7 +364,7 @@ Validation covers:
 - Required sections are present and non-empty.
 - `min_length` on `text` sections.
 - `min` on `list` and `steps` sections.
-- `steps[].blocks` references valid step indices (no forward references beyond array length, no self-reference).
+- `steps[].blocks` references valid **1-based** step indices in the range `1..steps.length` (step 1 is the first step). `0` and out-of-range values are rejected with a clear "step indices are 1-based" error; self-references (step `n` listing `n` in its own `blocks`) are also rejected.
 - Object-spec fields match their declared `kind`.
 - `template` name resolves in `plan_templates`.
 
