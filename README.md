@@ -95,6 +95,8 @@ Every command supports `--json` for structured output. `sd list`, `sd ready`, `s
 | `sd plan show <pl-id>` | Show a plan with sections, children, and status (recurses through nested sub-plans up to `max_plan_depth`) |
 | `sd plan validate <pl-id>` | Re-run validation against the current template definition |
 | `sd plan list` | List plans (`--seed`, `--status`, `--outcome`, `--template`) |
+| `sd plan adopt <plan-id> <seed-id...>` | Adopt one or more already-open seeds into an existing plan (`--step <i>` to anchor at a blueprint step index; link-only, bumps revision) |
+| `sd plan release <plan-id> <seed-id...>` | Detach one or more seeds from a plan without closing them (link-only; bumps revision) |
 | `sd plan outcome <pl-id> --result <success\|partial\|failure>` | Record a plan outcome (`--note`) |
 | `sd plan review <pl-id> --by <name>` | Record a reviewer (informational; not a state transition) |
 
@@ -185,13 +187,16 @@ The LLM produces a submission JSON in the same shape, with concrete content. Eac
     "approach": "Use AJV to validate template-driven plans, mirroring mulch's custom_types pipeline.",
     "steps": [
       { "title": "Schema generator", "type": "task", "priority": 1, "blocks": [2, 3] },
-      { "title": "Submit command", "type": "task", "priority": 1, "blocks": [] },
-      { "title": "Show command",   "type": "task", "priority": 2, "blocks": [] }
+      { "title": "Submit command",   "type": "task", "priority": 1, "blocks": [] },
+      { "title": "Show command",     "type": "task", "priority": 2, "blocks": [] },
+      { "title": "Audit cookie flags", "type": "task", "priority": 2, "blocks": [], "existing_seed": "seeds-aa05" }
     ],
     "acceptance": ["End-to-end submit + show works"]
   }
 }
 ```
+
+A step with `existing_seed: "<seed-id>"` adopts an already-open seed at that index instead of spawning a fresh child — see [Adopting existing seeds](#adopting-existing-seeds). `existing_seed` and `plan_template` are mutually exclusive on the same step.
 
 ```bash
 sd plan submit seeds-9c4d --plan plan.json
@@ -223,6 +228,67 @@ Outcomes (`success | partial | failure`) are storage-only — aggregation and re
 ### Nested plans
 
 A step can declare `plan_template: <name>` to spawn a child seed that requires its own sub-plan. The child is created with `requires_plan: true` and is hidden from `sd ready` until its plan is submitted. `sd plan show` recursively renders nested plans up to `max_plan_depth` (default 3).
+
+### Adopting existing seeds
+
+A plan can link in already-open seeds instead of duplicating them as fresh children. Adoption is **link-only** — the seed's `status`, `assignee`, `labels`, `priority`, `type`, and `title` are never mutated; only the plan link is added. Release is the inverse: detach without closing.
+
+Three surfaces stage adoptions:
+
+```bash
+# 1. Submit-time — set existing_seed on a step in the plan JSON
+sd plan submit seeds-9c4d --plan plan.json   # step with "existing_seed": "seeds-aa05"
+
+# 2. Post-submit adoption (loose, or anchored to a blueprint step index)
+sd plan adopt pl-a1b2 seeds-aa05             # loose: no plan_step_index recorded
+sd plan adopt pl-a1b2 seeds-aa05 --step 3    # anchored at 1-based blueprint step 3
+
+# 3. Release — detach without closing
+sd plan release pl-a1b2 seeds-aa05
+```
+
+End-to-end example: stage two ad-hoc bugs into a freshly approved auth plan, then drop one back out.
+
+```bash
+# Two open bugs and a feature seed for OAuth work
+$ sd ready --format compact
+seeds-aa05  bug   P2  Audit cookie flags
+seeds-bb11  bug   P2  Fix CSRF token rotation
+seeds-9c4d  feat  P1  OAuth login
+
+# Plan the feature; submit a plan that adopts the cookie-flags bug at step 3
+$ sd plan submit seeds-9c4d --plan oauth-plan.json
+✓ plan pl-7f2a created (3 children spawned, 1 adopted)
+
+$ sd plan show pl-7f2a
+Plan: pl-7f2a [approved] rev 1
+...
+Children (4):
+  seeds-1101  [open]  Add OAuth provider config
+  seeds-1102  [open]  Wire callback handler
+  seeds-aa05  [open]  Audit cookie flags (adopted)
+  seeds-1103  [open]  Verify end-to-end login
+
+# Later: pull the second bug in too (loose; no specific step anchor)
+$ sd plan adopt pl-7f2a seeds-bb11
+✓ plan pl-7f2a revision bumped to 2
+
+# Realize the CSRF bug should ship separately — release it
+$ sd plan release pl-7f2a seeds-bb11
+✓ plan pl-7f2a revision bumped to 3
+$ sd show seeds-bb11   # still open, plan link gone, backref block stripped
+```
+
+Adoption applies the `seeds:plan-backref` block to the adopted seed's description (manual notes wrapping the markers survive). Release strips only that marker block. `sd plan show` tags adopted children with a muted `(adopted)` suffix in human output; `--json` adds `adopted: true` to each child summary that's listed in `plan.adoptedChildren`.
+
+Rejections are fail-fast and pre-write (both `plans.jsonl` and `issues.jsonl` are untouched on any error):
+
+- adopting a seed that's closed, missing, attached to a *different* plan, or equal to the plan's parent seed
+- listing the same seed twice in one command, or twice across `steps[]` in one submit
+- setting both `existing_seed` and `plan_template` on the same step
+- releasing a seed that isn't attached to the named plan, or equals the plan's parent
+
+Reassigning a seed across plans is two explicit steps: `sd plan release <other-pl> <seed>` first, then adopt.
 
 Full spec: see [PLAN_SPEC.md](./PLAN_SPEC.md).
 
