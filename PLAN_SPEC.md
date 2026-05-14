@@ -97,14 +97,21 @@ One plan per line, append-on-create, atomic-rewrite on update (same locking mode
 {"id":"pl-a1b2","seed":"seeds-9c4d","template":"feature","status":"draft","revision":1,"sections":{"context":"...","approach":"...","alternatives":[],"steps":[{"title":"Add OAuth provider config","type":"task","priority":2,"blocks":[1]},{"title":"Wire callback handler","type":"task","priority":2,"blocks":[]}],"risks":["Token refresh race condition (mx-902)"],"acceptance":["Login flow completes end-to-end","Refresh token rotates on use"]},"children":["seeds-aa01","seeds-aa02"],"outcome":null,"reviewedBy":null,"createdAt":"2026-05-06T10:00:00Z","updatedAt":"2026-05-06T10:00:00Z"}
 ```
 
+Optional `adoptedChildren?: string[]` is a subset of `children` whose entries were
+linked via adoption (step `existing_seed` at submit time, or `sd plan adopt`
+post-submit) rather than fresh-spawned. The field is only persisted when
+non-empty, so plans that never use adoption stay byte-identical to pre-feature
+output. `sd plan show` renders `(adopted)` next to each entry; `sd plan submit
+--overwrite` preserves entries for adopted children that survive the rewrite.
+
 ### issues.jsonl additions
 
 Two optional fields on `Issue`:
 
-- `plan_id?: string` — the plan this seed is part of (parent seed or spawned child).
-- `plan_step_index?: number` — for spawned children, the index in the plan's `steps` array (enables stale-child detection on plan revisions).
+- `plan_id?: string` — the plan this seed is part of (parent seed, spawned child, or [adopted](#adoption-and-release) child).
+- `plan_step_index?: number` — the 0-based index in the plan's `steps` array (set for spawned children, submit-time adoptions, and `sd plan adopt --step <i>`; absent on loose adoptions). Enables stale-child detection on plan revisions.
 
-These are additive; existing seeds remain valid.
+These are additive; existing seeds remain valid. `sd plan release` clears both fields and strips the description's `seeds:plan-backref` block (see [Adoption and Release](#adoption-and-release)).
 
 ## Plan Lifecycle
 
@@ -149,6 +156,13 @@ sd plan validate <pl-id>                               Re-run validation against
                                                        (useful after template config changes).
 
 sd plan templates                                      List available templates from config.
+
+sd plan adopt    <plan-id> <seed-id...> [--step <i>]   Adopt existing open seeds into a plan
+                                                       (link-only; bumps revision). `--step` is the
+                                                       1-based blueprint step index to anchor to.
+
+sd plan release  <plan-id> <seed-id...>                Detach seeds from a plan without closing them
+                                                       (link-only; bumps revision).
 ```
 
 `sd ready` is updated to surface plans-in-`draft` for the parent seeds it would otherwise return — planning is the highest-priority work when present.
@@ -246,7 +260,8 @@ The LLM never has to re-run `sd plan prompt`; the failure response carries enoug
     ],
     "steps": [
       { "title": "Add OAuth provider config", "type": "task", "priority": 2, "blocks": [2] },
-      { "title": "Wire callback handler", "type": "task", "priority": 2, "blocks": [] }
+      { "title": "Wire callback handler", "type": "task", "priority": 2, "blocks": [] },
+      { "title": "Audit cookie flags",        "type": "task", "priority": 2, "blocks": [], "existing_seed": "seeds-aa05" }
     ],
     "risks": ["Token refresh race (mx-902)"],
     "acceptance": ["Login flow completes end-to-end"]
@@ -276,7 +291,7 @@ Templates are declared in `.seeds/config.yaml` under `plan_templates:`. Each tem
 | ------------- | ---------------------------------- | ----------------------------------------------------------- |
 | `text`        | string                             | `min_length` optional.                                      |
 | `list`        | array                              | `item: text` or `item: { ...object spec... }`. `min` opt.   |
-| `steps`       | array of step objects              | Spawns child seeds 1:1. Step is `{title, type, priority, blocks: [step_index], plan_template?}`. `blocks` uses 1-based step indices. |
+| `steps`       | array of step objects              | Spawns child seeds 1:1. Step is `{title, type, priority, blocks: [step_index], plan_template?, existing_seed?}`. `blocks` uses 1-based step indices. `existing_seed` adopts an already-open seed instead of spawning a fresh child (see [Adoption and Release](#adoption-and-release)). |
 | object spec   | nested record of named fields      | Each field has its own `kind` recursively.                  |
 
 A custom template:
@@ -365,6 +380,7 @@ Validation covers:
 - `min_length` on `text` sections.
 - `min` on `list` and `steps` sections.
 - `steps[].blocks` references valid **1-based** step indices in the range `1..steps.length` (step 1 is the first step). `0` and out-of-range values are rejected with a clear "step indices are 1-based" error; self-references (step `n` listing `n` in its own `blocks`) are also rejected.
+- `steps[].existing_seed`, when present, is a non-empty string (AJV check). Existence, status, current-plan, parent-self, mutual exclusion with `plan_template`, and duplicate-across-steps checks run in a pre-write pass alongside the spawn pipeline — see [Adoption and Release](#adoption-and-release).
 - Object-spec fields match their declared `kind`.
 - `template` name resolves in `plan_templates`.
 
@@ -384,11 +400,91 @@ $ sd plan submit seeds-9c4d --plan plan.json
 With `--overwrite`:
 
 1. The existing `plans.jsonl` row is replaced atomically. `revision` is incremented.
-2. The new `steps` are diffed against the previous `children` by step title (or by `step_id` if templates declare stable IDs).
+2. The new `steps` are diffed against the previous `children` with this precedence:
+   1. **`step.existing_seed` id** — matches a current plan-child (rename / reorder pin) or pulls in an external adoption.
+   2. **`step.title`** — legacy fallback against any unmatched current plan-children.
+   3. **Spawn fresh** — no match either way.
+
+   Id-first precedence keeps adopted children stable across overwrites and prevents the title-match path from racing with an id-pinned step. Pre-existing overwrite-by-title behavior is unchanged when no step uses `existing_seed`.
 3. Children whose corresponding step is gone are listed in stderr as **obsolete** with a suggestion to close them: `sd close seeds-aa03 --reason "obsoleted by plan pl-a1b2 revision 2"`. Seeds does not auto-close them — the LLM has the context to decide whether the existing work is still useful.
-4. New steps spawn new child seeds; existing matching children are kept.
+4. New steps spawn new child seeds; existing matching children are kept (their backref block is refreshed in place so the snippet stays in sync with the live plan).
+5. `plan.adoptedChildren` is reconciled: prior entries that survive the rewrite are kept, freshly-adopted ids are appended, and the field is dropped if it becomes empty.
 
 Plan revisions are not preserved as separate rows. Git history of `plans.jsonl` is the audit trail. This keeps storage simple and avoids ID-space inflation.
+
+## Adoption and Release
+
+Adoption links an already-open seed into a plan instead of spawning a fresh child; release is the inverse. Both are **link-only** — they never mutate the seed's `status`, `assignee`, `labels`, `priority`, `type`, or `title`. The plan and seed JSONL rows are updated, edges are wired (or unwired), the `seeds:plan-backref` block in `description` is applied (or stripped), and the plan's `revision` is bumped once per command call.
+
+Three surfaces stage adoptions and releases:
+
+1. **Submit-time adoption** — a step in the submitted plan JSON carries `existing_seed: "<seed-id>"`. The named seed is linked into the plan at that step index instead of spawning a new child.
+2. **`sd plan adopt <plan-id> <seed-id...> [--step <i>]`** — post-submit adoption. `--step` is the 1-based blueprint step index to anchor to; omit it for a loose adoption (the seed gets no `plan_step_index` and its backref reads `Adopted into plan <pl-id>` instead of `Step N of plan <pl-id>`).
+3. **`sd plan release <plan-id> <seed-id...>`** — detach without closing. The seed remains open and queryable; only its plan link goes away.
+
+### Lifecycle
+
+Adoption on a fresh-submit or via `sd plan adopt`:
+
+- `seed.plan_id` ← `<plan-id>`
+- `seed.plan_step_index` ← step index (0-based; omitted on loose adoptions)
+- `seed.description` ← `applyPlanBackref(...)` — prepends the marker-delimited block, or replaces an existing block in place (manual notes wrapping the markers survive)
+- `seed.blocks` ← `appendUnique(seed.blocks, parentSeed.id)`
+- `parentSeed.blockedBy` ← gains the adopted seed (deduped)
+- `plan.children` ← appends the adopted seed (deduped)
+- `plan.adoptedChildren` ← appends the adopted seed (deduped)
+- `plan.revision` ← `prev + 1` (single bump per command)
+
+Release inverts each mutation:
+
+- `seed.plan_id` and `seed.plan_step_index` ← cleared (JSON.stringify drops the fields)
+- `seed.description` ← `stripPlanBackref(...)` — removes only the marker block, collapses whitespace at the new boundary, returns `undefined` when nothing remained so the field is dropped entirely
+- `seed.blocks` ← drops `parentSeed.id` (returns the same array when no change)
+- `parentSeed.blockedBy` ← drops the released seed
+- `plan.children` ← drops the released seed
+- `plan.adoptedChildren` ← drops the released seed; the field is removed from the plan row when it becomes empty
+- `plan.revision` ← `prev + 1`
+
+`sd plan show` renders adopted entries with a trailing `(adopted)` muted tag in human output; `--json` includes `adopted: true` on each child summary that's listed in `plan.adoptedChildren`.
+
+### Validation (pre-write, fail-fast)
+
+All candidates are resolved before any mutation. Any rejection aborts the command with both `plans.jsonl` and `issues.jsonl` untouched.
+
+**Adoption rejections:**
+
+| Condition                                                            | Error                                                                                            |
+| -------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `existing_seed` not found                                            | `seed <id> not found`                                                                            |
+| `existing_seed` is closed                                            | `seed <id> is closed; only open or in-progress seeds can be adopted`                             |
+| `existing_seed` already attached to another plan                     | `seed <id> is already attached to plan <pl-id>` (overwrite path allows same-plan adoptions)      |
+| `existing_seed` equals the parent seed of the plan                   | `cannot adopt the parent seed <id> into its own plan <pl-id>`                                    |
+| Same `existing_seed` listed by two steps in one submit / two CLI args | `existing_seed <id> is already adopted by an earlier step in this plan` / `Duplicate seed id…`   |
+| Step sets both `existing_seed` and `plan_template`                   | `existing_seed and plan_template are mutually exclusive`                                          |
+| `--step <i>` (adopt) out of range against `plan.sections.steps`      | `--step <i> is out of range (plan <pl-id> has N steps)`                                          |
+
+**Title mismatch warning** — when `seed.title !== step.title` on a submit-time adoption, a `⚠` warning goes to stderr and the seed's title is preserved. Adoption is not silently retitling; agents must reconcile manually if the mismatch is meaningful.
+
+**Release rejections:**
+
+| Condition                                          | Error                                                              |
+| -------------------------------------------------- | ------------------------------------------------------------------ |
+| Seed not found                                     | `seed <id> not found`                                              |
+| Seed has no plan or is attached to a different one | `seed <id> is not attached to plan <pl-id>` / `…attached to <px>`  |
+| Seed equals the parent of the plan                 | `cannot release the parent seed <id> from its own plan <pl-id>`   |
+| Duplicate seed ids in args                         | `Duplicate seed id(s) in args: <id>…`                              |
+
+### Concurrency: lock order
+
+Both `sd plan adopt` and `sd plan release` follow the global seeds convention: **outer lock = `plans.jsonl`, inner lock = `issues.jsonl`** (`mx-f29e43`). Same order as `sd plan submit`, `sd plan outcome`, and `sd plan review` so the lock graph has no cycles. All mutations across both files commit under the combined lock, and a single revision bump per command is guaranteed.
+
+### Edge cases
+
+- **Reassignment from another plan is out of scope.** A seed with a non-matching `plan_id` is rejected with a clear error; the caller must `sd plan release <other-pl> <seed>` first, then adopt. A future `--reassign-from <pl>` flag could collapse the two-step dance into one atomic command (deferred).
+- **Loose adoption** (`sd plan adopt` without `--step`) is intentional: pulling related ad-hoc work into a plan rarely lines up with a specific blueprint step. The backref block reflects this — agents reading the seed see `Adopted into plan <pl-id>` rather than a misleading step anchor.
+- **Adopting an in-progress seed** is allowed and intentional. Adoption is link-only; an agent already working the seed keeps working it, now with the plan framing surfaced in `sd show <seed>` and the plan now blocked by their progress.
+- **Manual notes around the backref block survive release.** The `seeds:plan-backref:start/end` markers are the only thing `stripPlanBackref` touches; string-based search/replace is explicitly avoided.
+- **JSONL byte stability.** `plan.adoptedChildren` is only persisted when non-empty, and is dropped from the row when release empties it. Plans that never use adoption produce the same `plans.jsonl` bytes as before the feature shipped.
 
 ## Outcomes
 
