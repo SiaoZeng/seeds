@@ -91,7 +91,7 @@ Every command supports `--json` for structured output. `sd list`, `sd ready`, `s
 |---------|-------------|
 | `sd plan templates` | List available plan templates |
 | `sd plan prompt <seed-id>` | Emit structured planning prompt JSON for a seed (`--template`, `--domain`) |
-| `sd plan submit <seed-id> --plan <file>` | Validate a plan, spawn child seeds, write the plan row (`--overwrite`, `--record-decision`, `--domain`) |
+| `sd plan submit <seed-id> --plan <file>` | Validate a plan, spawn child seeds, write the plan row (`--overwrite`, `--record-decision`, `--domain`, `--name`) |
 | `sd plan show <pl-id>` | Show a plan with sections, children, and status (recurses through nested sub-plans up to `max_plan_depth`) |
 | `sd plan validate <pl-id>` | Re-run validation against the current template definition |
 | `sd plan list` | List plans (`--seed`, `--status`, `--outcome`, `--template`) |
@@ -179,6 +179,7 @@ The LLM produces a submission JSON in the same shape, with concrete content. Eac
 ```json
 {
   "template": "feature",
+  "name": "Schema-driven plan validation",
   "sections": {
     "context": "...",
     "approach": "Use AJV to validate template-driven plans, mirroring mulch's custom_types pipeline.",
@@ -194,9 +195,10 @@ The LLM produces a submission JSON in the same shape, with concrete content. Eac
 
 ```bash
 sd plan submit seeds-9c4d --plan plan.json
+sd plan submit seeds-9c4d --plan plan.json --name "Schema-driven plan validation"
 ```
 
-Validates against the template, spawns one child seed per step, wires `blockedBy` from `step.blocks`, and writes a `plans.jsonl` row with status `approved`.
+Validates against the template, spawns one child seed per step, wires `blockedBy` from `step.blocks`, and writes a `plans.jsonl` row with status `approved`. The optional `--name <text>` flag (or top-level `"name"` in the plan JSON) sets a short human-readable label surfaced in `sd plan list` and `sd plan show`; when neither is provided, `sd plan submit` derives the name from the parent seed's title. `--overwrite` keeps the existing name unless a new one is supplied.
 
 ### 3. Show, outcome, review
 

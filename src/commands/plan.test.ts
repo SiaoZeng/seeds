@@ -2213,3 +2213,134 @@ describe("sd plan {show,validate,outcome,review}: accept seed id (seeds-51bc)", 
 		expect(stderr.toLowerCase()).toContain("not found");
 	});
 });
+
+describe("sd plan: name field (seeds-5640)", () => {
+	async function submitWithArgs(
+		seedTitle: string,
+		extraArgs: string[] = [],
+		plan: unknown = validPlanFor(),
+	): Promise<{ seedId: string; planId: string }> {
+		const seedId = await createSeed(tmpDir, seedTitle);
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stdout, exitCode, stderr } = await run(
+			["plan", "submit", seedId, "--plan", planPath, "--json", ...extraArgs],
+			tmpDir,
+		);
+		if (exitCode !== 0) throw new Error(`submit failed: ${stderr}`);
+		const planId = (JSON.parse(stdout) as { plan_id: string }).plan_id;
+		return { seedId, planId };
+	}
+
+	async function readPlan(planId: string): Promise<{ id: string; name?: string }> {
+		const plans = await readJsonl<{ id: string; name?: string }>(
+			join(tmpDir, ".seeds/plans.jsonl"),
+		);
+		const found = plans.find((p) => p.id === planId);
+		if (!found) throw new Error(`plan not found: ${planId}`);
+		return found;
+	}
+
+	test("submit defaults plan.name to the parent seed's title", async () => {
+		const { planId } = await submitWithArgs("Schema-driven config editor");
+		const plan = await readPlan(planId);
+		expect(plan.name).toBe("Schema-driven config editor");
+	});
+
+	test("--name overrides the seed-title default", async () => {
+		const { planId } = await submitWithArgs("Plain seed", ["--name", "OAuth provider wiring"]);
+		const plan = await readPlan(planId);
+		expect(plan.name).toBe("OAuth provider wiring");
+	});
+
+	test("plan JSON top-level name is read when --name is absent", async () => {
+		const planWithName = { ...validPlanFor(), name: "Token refresh race fix" };
+		const { planId } = await submitWithArgs("Some seed title", [], planWithName);
+		const plan = await readPlan(planId);
+		expect(plan.name).toBe("Token refresh race fix");
+	});
+
+	test("--name beats the plan JSON name", async () => {
+		const planWithName = { ...validPlanFor(), name: "JSON-supplied name" };
+		const { planId } = await submitWithArgs(
+			"Seed title",
+			["--name", "Flag-supplied name"],
+			planWithName,
+		);
+		const plan = await readPlan(planId);
+		expect(plan.name).toBe("Flag-supplied name");
+	});
+
+	test("empty / whitespace name in plan JSON falls back to seed title", async () => {
+		const planWithBlankName = { ...validPlanFor(), name: "   " };
+		const { planId } = await submitWithArgs("Fallback title", [], planWithBlankName);
+		const plan = await readPlan(planId);
+		expect(plan.name).toBe("Fallback title");
+	});
+
+	test("--overwrite preserves existing name when neither flag nor JSON supplies one", async () => {
+		const seedId = await createSeed(tmpDir, "Original seed title");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(
+			["plan", "submit", seedId, "--plan", planPath, "--name", "Locked-in name", "--json"],
+			tmpDir,
+		);
+		const planId = (JSON.parse(first.stdout) as { plan_id: string }).plan_id;
+
+		const planPath2 = await writePlanFile(tmpDir, validPlanFor());
+		await run(["plan", "submit", seedId, "--plan", planPath2, "--overwrite", "--json"], tmpDir);
+		const plan = await readPlan(planId);
+		expect(plan.name).toBe("Locked-in name");
+	});
+
+	test("--overwrite with --name updates the name", async () => {
+		const seedId = await createSeed(tmpDir, "First name");
+		const planPath = await writePlanFile(tmpDir, validPlanFor());
+		const first = await run(["plan", "submit", seedId, "--plan", planPath, "--json"], tmpDir);
+		const planId = (JSON.parse(first.stdout) as { plan_id: string }).plan_id;
+
+		const planPath2 = await writePlanFile(tmpDir, validPlanFor());
+		await run(
+			[
+				"plan",
+				"submit",
+				seedId,
+				"--plan",
+				planPath2,
+				"--overwrite",
+				"--name",
+				"Renamed plan",
+				"--json",
+			],
+			tmpDir,
+		);
+		const plan = await readPlan(planId);
+		expect(plan.name).toBe("Renamed plan");
+	});
+
+	test("plan show surfaces the name in human output and --json payload", async () => {
+		const { planId } = await submitWithArgs("Human-readable plan name");
+
+		const { stdout: human } = await run(["plan", "show", planId], tmpDir);
+		expect(human).toContain("Name:");
+		expect(human).toContain("Human-readable plan name");
+
+		const { stdout: jsonOut } = await run(["plan", "show", planId, "--json"], tmpDir);
+		const parsed = JSON.parse(jsonOut) as { plan: { name?: string } };
+		expect(parsed.plan.name).toBe("Human-readable plan name");
+	});
+
+	test("plan list surfaces the name in human output", async () => {
+		await submitWithArgs("Wire greenhouse → overstory handoff");
+		const { stdout, exitCode } = await run(["plan", "list"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("Wire greenhouse");
+	});
+
+	test("plan list --json includes the name field", async () => {
+		const { planId } = await submitWithArgs("Plan with JSON name");
+		const { stdout } = await run(["plan", "list", "--json"], tmpDir);
+		const parsed = JSON.parse(stdout) as { plans: Array<{ id: string; name?: string }> };
+		const row = parsed.plans.find((p) => p.id === planId);
+		expect(row?.name).toBe("Plan with JSON name");
+	});
+});

@@ -27,6 +27,7 @@ export interface Plan {
 	id: string;
 	seed: string;
 	template: string;
+	name?: string;
 	status: PlanStatus;
 	revision: number;
 	sections: Record<string, unknown>;

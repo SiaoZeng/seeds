@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `Plan.name?: string` — optional short human-readable label so `sd plan list` and `sd plan show` carry semantic signal beyond opaque `pl-*` ids. `sd plan submit` resolves the name in priority order: `--name <text>` flag > top-level `name` field in the plan JSON > parent seed's title (fallback). `sd plan show` renders a `Name:` header line; `sd plan list` shows the name (or `(unnamed)`) in a fixed-width column between `rev` and `template`, truncated with `…` at ~40 chars. `--json` payloads gain the field additively — existing plans without a `name` row continue to deserialize. `--overwrite` preserves the existing name unless `--name` or the plan JSON supplies a new one. (seeds-5640)
+
 ## [0.4.3] - 2026-05-10
 
 ### Added

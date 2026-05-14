@@ -219,6 +219,7 @@ sd plan submit <seed-id> --plan <file> Validate, spawn child seeds, write plan r
   --overwrite                          Replace an existing non-draft plan; bumps revision
   --record-decision                    Best-effort: record approach as a mulch decision on success
   --domain <name>                      Force mulch domain for --record-decision
+  --name <text>                        Set human-readable plan label (defaults to seed title)
 sd plan show <pl-id>                   Show plan with sections, children, and nested sub-plans
 sd plan validate <pl-id>               Re-run validation against the current template
 sd plan list                           List plans

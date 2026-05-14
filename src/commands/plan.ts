@@ -56,6 +56,10 @@ export function register(program: Command): void {
 			"Best-effort: after success, record the chosen approach as a mulch decision",
 		)
 		.option("--domain <name>", "Force the mulch domain used for --record-decision")
+		.option(
+			"--name <text>",
+			"Human-readable plan label; overrides plan JSON 'name' and the seed-title default",
+		)
 		.option("--json", "Output as JSON")
 		.addHelpText(
 			"after",
@@ -64,6 +68,7 @@ Plan file shape:
 
   {
     "template": "feature",
+    "name": "Schema-driven config editor",
     "sections": {
       "approach": "Plain-text approach...",
       "steps": [{ "title": "Step 1" }, ...],
@@ -74,6 +79,9 @@ Plan file shape:
 The shape mirrors 'sd plan prompt': drop the plan_request wrapper, and
 sections is an object keyed by name (not the array of section metadata
 that the prompt emits). Section names and value kinds match the template.
+
+Plan name resolution:
+  --name flag > plan JSON 'name' > parent seed title (fallback)
 `,
 		)
 		.action(
@@ -84,6 +92,7 @@ that the prompt emits). Section names and value kinds match the template.
 					overwrite?: boolean;
 					recordDecision?: boolean;
 					domain?: string;
+					name?: string;
 					json?: boolean;
 				},
 			) => {
@@ -91,6 +100,7 @@ that the prompt emits). Section names and value kinds match the template.
 					overwrite: Boolean(opts.overwrite),
 					recordDecision: Boolean(opts.recordDecision),
 					domainOverride: opts.domain,
+					nameOverride: opts.name,
 					jsonMode: Boolean(opts.json),
 				});
 			},
@@ -214,7 +224,7 @@ interface PlanRequest {
 }
 
 const INSTRUCTIONS =
-	'Fill every section. Required fields are marked. Use prior_art entries to ground decisions. Reply with JSON shaped { "template": "<name>", "sections": { "<section-name>": <value>, ... } } — drop the plan_request wrapper, and sections in your reply is an object keyed by name (not the array of section metadata above). In each step, `blocks` lists step indices that this step blocks (i.e. that depend on this step finishing first); leave empty if nothing depends on it.';
+	'Fill every section. Required fields are marked. Use prior_art entries to ground decisions. Reply with JSON shaped { "template": "<name>", "name": "<short label>", "sections": { "<section-name>": <value>, ... } } — drop the plan_request wrapper, and sections in your reply is an object keyed by name (not the array of section metadata above). The top-level `name` field is an optional short human-readable label (e.g. "Schema-driven config editor"); if you omit it, sd plan submit derives one from the parent seed title. In each step, `blocks` lists step indices that this step blocks (i.e. that depend on this step finishing first); leave empty if nothing depends on it.';
 
 function buildPlanRequest(
 	seedId: string,
@@ -321,6 +331,7 @@ interface SubmittedStep {
 
 interface SubmittedPlan {
 	template: string;
+	name?: string;
 	sections: {
 		steps: SubmittedStep[];
 		[key: string]: unknown;
@@ -381,11 +392,26 @@ interface SubmitOptions {
 	overwrite: boolean;
 	recordDecision: boolean;
 	domainOverride?: string;
+	nameOverride?: string;
 	jsonMode: boolean;
 }
 
+// Plan names are short human-readable labels. Empty/whitespace-only inputs are
+// treated as "not provided" so the fall-through to seed title kicks in.
+function normalizePlanName(value: unknown): string | undefined {
+	if (typeof value !== "string") return undefined;
+	const trimmed = value.trim();
+	return trimmed.length > 0 ? trimmed : undefined;
+}
+
 async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions): Promise<void> {
-	const { overwrite, recordDecision: shouldRecordDecision, domainOverride, jsonMode } = opts;
+	const {
+		overwrite,
+		recordDecision: shouldRecordDecision,
+		domainOverride,
+		nameOverride,
+		jsonMode,
+	} = opts;
 	const dir = await findSeedsDir();
 
 	const raw = await readPlanInput(planFile);
@@ -428,6 +454,11 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 		return;
 	}
 	const config = await readConfig(dir);
+
+	// Name resolution priority (seeds-5640): --name flag > plan JSON `name` >
+	// seed.title (fresh submit) or existing plan.name (overwrite). The third
+	// fallback is decided inside the lock so we see the live seed/plan state.
+	const explicitName = normalizePlanName(nameOverride) ?? normalizePlanName(submitted.name);
 
 	let createdPlanId = "";
 	let childIds: string[] = [];
@@ -482,6 +513,7 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 					projectName: config.project,
 					templateName,
 					newSections: submitted.sections as Record<string, unknown>,
+					name: explicitName ?? existingPlan.name ?? normalizePlanName(seed.title),
 					now,
 				});
 				await writeIssues(dir, allIssues);
@@ -578,6 +610,7 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				child.blocks = [...(child.blocks ?? []), seedId];
 			}
 
+			const resolvedName = explicitName ?? normalizePlanName(seed.title);
 			const plan: Plan = {
 				id: planId,
 				seed: seedId,
@@ -589,6 +622,7 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 				createdAt: now,
 				updatedAt: now,
 			};
+			if (resolvedName) plan.name = resolvedName;
 
 			await writeIssues(dir, [...allIssues, ...newIssues]);
 
@@ -701,6 +735,7 @@ interface OverwriteArgs {
 	projectName: string;
 	templateName: string;
 	newSections: Record<string, unknown>;
+	name?: string;
 	now: string;
 }
 
@@ -723,6 +758,7 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		projectName,
 		templateName,
 		newSections,
+		name,
 		now,
 	} = args;
 
@@ -894,6 +930,7 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		revision: existingPlan.revision + 1,
 		updatedAt: now,
 	};
+	if (name) updatedPlan.name = name;
 	if (planIdx >= 0) allPlans[planIdx] = updatedPlan;
 
 	const allIssuesWithNew = [...allIssues, ...newIssues];
@@ -1072,8 +1109,9 @@ function renderNestedPlanHuman(entry: PlanTreeEntry, indent: string): void {
 		return;
 	}
 	const { plan, children, children_plans } = entry;
+	const nameLabel = plan.name ? `  ${plan.name}` : "";
 	console.log(
-		`${indent}${brand("Sub-plan:")} ${accent.bold(plan.id)}  ${muted(`[${plan.status}]`)}  ${muted(`rev ${plan.revision}`)}  ${muted(`seed=${plan.seed}`)}`,
+		`${indent}${brand("Sub-plan:")} ${accent.bold(plan.id)}${nameLabel}  ${muted(`[${plan.status}]`)}  ${muted(`rev ${plan.revision}`)}  ${muted(`seed=${plan.seed}`)}`,
 	);
 	console.log(`${indent}${muted(`Children (${children.length}):`)}`);
 	const childIndent = `${indent}  `;
@@ -1138,6 +1176,7 @@ export async function runShow(idArg: string, jsonMode: boolean): Promise<void> {
 	}
 
 	console.log(`${accent.bold(plan.id)}  ${brand(plan.status)}  ${muted(`rev ${plan.revision}`)}`);
+	if (plan.name) console.log(`Name:     ${plan.name}`);
 	console.log(`Seed:     ${accent(plan.seed)}`);
 	console.log(`Template: ${plan.template}`);
 	console.log(`Created:  ${muted(plan.createdAt)}`);
@@ -1220,12 +1259,21 @@ async function runList(filters: ListFilters, jsonMode: boolean): Promise<void> {
 		console.log(muted("No plans match."));
 		return;
 	}
+	const nameWidth = 40;
 	for (const p of filtered) {
 		const outcome = p.outcome ? muted(` (${p.outcome})`) : "";
+		const namePart = p.name
+			? `  ${truncateName(p.name, nameWidth)}`
+			: `  ${muted("(unnamed)".padEnd(nameWidth))}`;
 		console.log(
-			`${accent.bold(p.id)}  ${muted(p.status)}  rev ${p.revision}  ${muted(p.template)}  ${muted(`seed=${p.seed}`)}  ${muted(`children=${p.children.length}`)}${outcome}  ${muted(p.createdAt)}`,
+			`${accent.bold(p.id)}  ${muted(p.status)}  rev ${p.revision}${namePart}  ${muted(p.template)}  ${muted(`seed=${p.seed}`)}  ${muted(`children=${p.children.length}`)}${outcome}  ${muted(p.createdAt)}`,
 		);
 	}
+}
+
+function truncateName(value: string, width: number): string {
+	if (value.length <= width) return value.padEnd(width);
+	return `${value.slice(0, Math.max(0, width - 1))}…`;
 }
 
 const VALID_OUTCOMES = new Set(["success", "partial", "failure"]);
