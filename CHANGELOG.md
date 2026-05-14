@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.4] - 2026-05-13
+
 ### Changed
 - **BREAKING (plan submit wire format)**: `steps[].blocks` in `sd plan submit` payloads now uses **1-based** step indices (step 1 is the first step, step N is the last). Previously 0-based. LLMs — the primary authors of plan files — consistently produced 1-based blocks, so the wire format moves to match. Concretely: a two-step plan where step 1 blocks step 2 is now `[{ title: "...", blocks: [2] }, { title: "...", blocks: [] }]`. The validator rejects `0` and out-of-range values with `step indices are 1-based; valid range 1..N`; the self-reference check is now "step n cannot have `n` in its own blocks". The internal `Issue.plan_step_index` back-link stored on each spawned child stays 0-based — it's not author-facing. `sd plan show` renders stored 1-based values verbatim (no offset shift), so output is unchanged for plans submitted under the new format. Plans stored before this change (`.seeds/plans.jsonl` rows with the old 0-based values) are not migrated; the stored numbers are display-only after spawning since children already carry resolved seed-id `blocks`/`blockedBy` edges. PLAN_SPEC.md, the `sd plan prompt` INSTRUCTIONS string, and the README example all reflect 1-based indexing. (seeds-185f)
 
@@ -191,7 +193,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.3...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.4...HEAD
+[0.4.4]: https://github.com/jayminwest/seeds/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/jayminwest/seeds/compare/v0.4.2...v0.4.3
 [0.4.2]: https://github.com/jayminwest/seeds/compare/v0.4.1...v0.4.2
 [0.4.1]: https://github.com/jayminwest/seeds/compare/v0.4.0...v0.4.1
