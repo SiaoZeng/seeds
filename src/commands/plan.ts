@@ -797,13 +797,18 @@ interface AdoptionValidationArgs {
 	steps: SubmittedStep[];
 	seedId: string;
 	allIssues: Issue[];
+	// When set, seeds with plan_id === allowedCurrentPlanId pass the
+	// already-attached check. The overwrite path passes the live plan id so a
+	// step can reference a current plan-child by id (rename + reorder) without
+	// being mistaken for cross-plan poaching.
+	allowedCurrentPlanId?: string;
 }
 
 // Validate every step's existing_seed before any writes. Returns a
 // step-index → adoption map for the fresh-submit pipeline. Throws on the first
 // invalid candidate so the lock callback aborts cleanly.
 function validateAdoptions(args: AdoptionValidationArgs): Map<number, AdoptionEntry> {
-	const { steps, seedId, allIssues } = args;
+	const { steps, seedId, allIssues, allowedCurrentPlanId } = args;
 	const out = new Map<number, AdoptionEntry>();
 	const seen = new Set<string>();
 	for (let i = 0; i < steps.length; i++) {
@@ -834,7 +839,7 @@ function validateAdoptions(args: AdoptionValidationArgs): Map<number, AdoptionEn
 				`${label}: existing_seed ${adoptId} is closed; only open or in-progress seeds can be adopted.`,
 			);
 		}
-		if (seed.plan_id) {
+		if (seed.plan_id && seed.plan_id !== allowedCurrentPlanId) {
 			throw new Error(
 				`${label}: existing_seed ${adoptId} is already attached to plan ${seed.plan_id}.`,
 			);
@@ -895,13 +900,30 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		now,
 	} = args;
 
-	// Match existing children to new steps by title (PLAN_SPEC.md:387-388).
+	// Validate any existing_seed adoptions before mutating state. Seeds
+	// already attached to *this* plan are allowed; that's how the overwrite
+	// path lets a step pin to a current plan-child by id (rename, reorder)
+	// instead of relying on title matching alone. (seeds-99ae / pl-43ff step 3)
+	const adoptions = validateAdoptions({
+		steps,
+		seedId: seed.id,
+		allIssues,
+		allowedCurrentPlanId: existingPlan.id,
+	});
+
+	// Match existing children to new steps. Precedence:
+	//   1. step.existing_seed id — current plan-child or external adoption.
+	//   2. step.title against unmatched current plan-children (legacy path).
+	//   3. Spawn a fresh child.
+	// (PLAN_SPEC.md:387-388)
 	const oldChildIssues: Issue[] = [];
 	for (const cid of existingPlan.children) {
 		const c = allIssues.find((i) => i.id === cid);
 		if (c) oldChildIssues.push(c);
 	}
+	const oldChildIdSet = new Set(oldChildIssues.map((c) => c.id));
 	const usedOldIds = new Set<string>();
+	const adoptedExternalIds = new Set<string>();
 	const finalChildIds: string[] = [];
 	const newSpawnedIds: string[] = [];
 	const issueIds = new Set(allIssues.map((i) => i.id));
@@ -909,6 +931,16 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 	for (let i = 0; i < steps.length; i++) {
 		const step = steps[i];
 		if (!step) continue;
+		const adoption = adoptions.get(i);
+		if (adoption) {
+			finalChildIds.push(adoption.seedId);
+			if (oldChildIdSet.has(adoption.seedId)) {
+				usedOldIds.add(adoption.seedId);
+			} else {
+				adoptedExternalIds.add(adoption.seedId);
+			}
+			continue;
+		}
 		const match = oldChildIssues.find((c) => !usedOldIds.has(c.id) && c.title === step.title);
 		if (match) {
 			usedOldIds.add(match.id);
@@ -924,7 +956,9 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 	// Build issues for newly spawned children. Existing matched children keep
 	// their fields (assignee, labels, status, etc.) but their backref block is
 	// refreshed in place so the snippet stays in sync with the live plan
-	// (seeds-76af).
+	// (seeds-76af). External adoptions get linked into the plan (plan_id,
+	// plan_step_index, backref) without touching other fields; the parent-
+	// blocks edge is added in the unified wiring pass below.
 	const approach = (newSections as { approach?: unknown }).approach;
 	const newIssues: Issue[] = [];
 	for (let i = 0; i < steps.length; i++) {
@@ -938,6 +972,27 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 			if (matched) {
 				allIssues[matchedIdx] = {
 					...matched,
+					description: applyPlanBackref(matched.description, {
+						stepIndex: i,
+						planId: existingPlan.id,
+						parentSeedId: seed.id,
+						parentSeedTitle: seed.title,
+						templateName,
+						approach,
+					}),
+					updatedAt: now,
+				};
+			}
+			continue;
+		}
+		if (adoptedExternalIds.has(childId)) {
+			const matchedIdx = allIssues.findIndex((iss) => iss.id === childId);
+			const matched = allIssues[matchedIdx];
+			if (matched) {
+				allIssues[matchedIdx] = {
+					...matched,
+					plan_id: existingPlan.id,
+					plan_step_index: i,
 					description: applyPlanBackref(matched.description, {
 						stepIndex: i,
 						planId: existingPlan.id,
@@ -1039,13 +1094,24 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 		}
 	}
 
+	// External adoptions need the parent-blocks edge added (matched old
+	// children already have it; fresh children get it inline above).
+	for (const childId of adoptedExternalIds) {
+		updateMatched(childId, "blocks", seed.id);
+	}
+
 	// Obsolete children = old plan children with no matching step in new plan.
 	const obsolete: Issue[] = oldChildIssues.filter((c) => !usedOldIds.has(c.id));
 
-	// Parent seed: drop obsolete from blockedBy, ensure all current plan children
-	// are present. Preserve unrelated blockers.
+	// Parent seed: drop obsolete from blockedBy, ensure all current plan
+	// children are present. Preserve unrelated blockers; dedupe against
+	// finalChildIds so an externally-adopted seed the parent already depended
+	// on doesn't double up.
 	const oldChildSet = new Set(existingPlan.children);
-	const externalBlockers = (seed.blockedBy ?? []).filter((b) => !oldChildSet.has(b));
+	const finalChildSet = new Set(finalChildIds);
+	const externalBlockers = (seed.blockedBy ?? []).filter(
+		(b) => !oldChildSet.has(b) && !finalChildSet.has(b),
+	);
 	const updatedSeed: Issue = {
 		...seed,
 		plan_id: existingPlan.id,
