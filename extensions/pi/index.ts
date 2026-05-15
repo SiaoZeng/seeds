@@ -22,10 +22,16 @@ import {
 	readStatus,
 	type StatusSnapshot,
 } from "./lib/status.ts";
+import { registerSeedsTools } from "./lib/tools.ts";
 
 const STATUS_KEY = "seeds";
 
 export default function piSeedsExtension(pi: ExtensionAPI): void {
+	// Tools register once at load time (pi expects a stable tool surface across
+	// reloads). They derive cwd from ctx on each call, so seeds-init state is
+	// resolved per-invocation rather than at registration.
+	registerSeedsTools(pi);
+
 	// Resolved at session_start so config edits take effect on /reload without
 	// re-installing the extension. Subsequent hooks read this via the closure.
 	let resolved: ResolvedPiConfig | undefined;
