@@ -28,6 +28,7 @@ export interface PiConfig {
 	prime?: PiPrimeConfig;
 	cache?: PiCacheConfig;
 	reference_expansion?: PiReferenceExpansionConfig;
+	commands?: boolean;
 }
 
 export interface ResolvedPiConfig {
@@ -36,6 +37,7 @@ export interface ResolvedPiConfig {
 	prime: Required<PiPrimeConfig>;
 	cache: Required<PiCacheConfig>;
 	reference_expansion: Required<PiReferenceExpansionConfig>;
+	commands: boolean;
 }
 
 export const DEFAULT_PI_CONFIG: ResolvedPiConfig = {
@@ -44,6 +46,7 @@ export const DEFAULT_PI_CONFIG: ResolvedPiConfig = {
 	prime: { sections: ["closeProtocol", "rules"] },
 	cache: { invalidate_on_write: true },
 	reference_expansion: { max_refs: 5 },
+	commands: true,
 };
 
 export function resolvePiConfig(user: PiConfig | undefined): ResolvedPiConfig {
@@ -61,6 +64,7 @@ export function resolvePiConfig(user: PiConfig | undefined): ResolvedPiConfig {
 			max_refs:
 				user?.reference_expansion?.max_refs ?? DEFAULT_PI_CONFIG.reference_expansion.max_refs,
 		},
+		commands: user?.commands ?? DEFAULT_PI_CONFIG.commands,
 	};
 }
 

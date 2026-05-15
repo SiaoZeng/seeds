@@ -142,6 +142,13 @@ export function configSchema(): JSONSchema {
 							},
 						},
 					},
+					commands: {
+						type: "boolean",
+						title: "Slash commands",
+						description:
+							"Register `/sd`, `/sd:ready`, `/sd:create`, `/sd:show`, `/sd:close`, and `/sd:claim` slash commands. `/sd:claim <id>` also pins `working: <id>` onto the status widget; the prefix survives `/reload`.",
+						default: true,
+					},
 				},
 			},
 		},

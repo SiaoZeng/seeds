@@ -86,7 +86,7 @@ describe("sd config schema", () => {
 		expect(pi).toBeDefined();
 		const piProps = pi?.properties as Record<string, unknown>;
 		expect(Object.keys(piProps).sort()).toEqual(
-			["auto_prime", "cache", "prime", "reference_expansion", "status_widget"].sort(),
+			["auto_prime", "cache", "commands", "prime", "reference_expansion", "status_widget"].sort(),
 		);
 		expect(pi?.additionalProperties).toBe(false);
 

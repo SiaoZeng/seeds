@@ -4,16 +4,19 @@
 // Wired today:
 //   • session_start — read pi config, render selected `sd prime` sections,
 //     compute status counts, refresh the ready-list cache, register the
-//     `#sd-*` autocomplete provider (seeds-3a2a + seeds-e9d0)
+//     `#sd-*` autocomplete provider (seeds-3a2a + seeds-e9d0), rehydrate the
+//     `working: <id>` widget prefix from prior session entries (seeds-5103)
 //   • before_agent_start — append memoed sections to the system prompt
 //   • agent_end — stat .seeds/issues.jsonl mtime; refresh widget + ready cache
 //   • input — expand `#sd-<id>` references into a hidden <seeds-context>
 //     block, capped at pi.reference_expansion.max_refs (seeds-e9d0)
 //   • Tools — sd_create, sd_ready, sd_show, sd_update, sd_close, sd_dep,
 //     sd_search (seeds-adb1)
+//   • Slash commands — /sd, /sd:ready, /sd:create, /sd:show, /sd:close,
+//     /sd:claim (seeds-5103). /sd:claim pins `working: <id>` onto the status
+//     widget and persists via pi.appendEntry so /reload preserves it.
 //
 // Subsequent plan steps fill in:
-//   • seeds-5103 — slash commands (/sd, /sd:ready, /sd:create, ...) + currentIssueId state
 //   • seeds-89d2 — sd setup pi recipe + pi-aware onboarding marker variant
 
 import type { ExtensionAPI, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
@@ -25,17 +28,28 @@ import {
 	type ReadyItem,
 	readReadyItems,
 } from "./lib/autocomplete.ts";
+import {
+	buildCommandRegistrations,
+	type CommandDeps,
+	collectPersistedCurrentIssueId,
+} from "./lib/commands.ts";
 import { type ResolvedPiConfig, readPiConfig } from "./lib/config.ts";
 import { buildPrimeInjection } from "./lib/prime.ts";
 import {
 	formatStatusText,
 	readIssuesMtime,
 	readStatus,
+	type StatusCounts,
 	type StatusSnapshot,
 } from "./lib/status.ts";
 import { registerSeedsTools } from "./lib/tools.ts";
 
 const STATUS_KEY = "seeds";
+
+function composeStatus(counts: StatusCounts, workingId: string | undefined): string {
+	const base = formatStatusText(counts);
+	return workingId ? `working: ${workingId} · ${base}` : base;
+}
 
 export default function piSeedsExtension(pi: ExtensionAPI): void {
 	// Tools register once at load time (pi expects a stable tool surface across
@@ -54,6 +68,14 @@ export default function piSeedsExtension(pi: ExtensionAPI): void {
 	// status_widget is disabled.
 	let lastSeedsDir: string | undefined;
 	let lastIssuesMtimeMs: number | undefined;
+	// Latest session cwd + UI handle, captured on session_start. Commands are
+	// registered once at extension load (before any session) so the handlers
+	// read these via closure rather than baking in stale values.
+	let sessionCwd: string | undefined;
+	let sessionUi: ExtensionUIContext | undefined;
+	// currentIssueId pins `working: <id>` onto the status widget. Persisted via
+	// pi.appendEntry so /reload survives.
+	let currentIssueId: string | undefined;
 
 	const readyCache: ReadyCache = { get: () => readyItems };
 
@@ -66,13 +88,46 @@ export default function piSeedsExtension(pi: ExtensionAPI): void {
 		isEnabled: () => resolved !== undefined,
 	});
 
+	// Slash commands registered once at load. The deps getter resolves the
+	// current session cwd / sendMessage on each invocation so the commands are
+	// inert between sessions (resolved=undefined) and re-bind across /reload.
+	const commandRegistrations = buildCommandRegistrations(() => buildCommandDeps());
+	for (const reg of commandRegistrations) {
+		pi.registerCommand(reg.name, reg.options);
+	}
+
+	function buildCommandDeps(): CommandDeps | undefined {
+		if (!resolved?.commands) return undefined;
+		if (!sessionCwd) return undefined;
+		const ui = sessionUi;
+		return {
+			exec: (cmd, args, opts) => pi.exec(cmd, args, opts),
+			cwd: sessionCwd,
+			sendMessage: (message, opts) => pi.sendMessage(message, opts),
+			appendEntry: (customType, data) => pi.appendEntry(customType, data),
+			notify: ui ? (msg, type) => ui.notify(msg, type) : undefined,
+			setWorking: (id) => {
+				currentIssueId = id;
+				renderStatus();
+			},
+			getCurrentIssueId: () => currentIssueId,
+		};
+	}
+
+	function renderStatus(): void {
+		if (!sessionUi) return;
+		if (!resolved?.status_widget) return;
+		if (!status) return;
+		sessionUi.setStatus(STATUS_KEY, composeStatus(status.counts, currentIssueId));
+	}
+
 	async function refreshStatus(cwd: string, ui: ExtensionUIContext): Promise<void> {
 		if (!resolved?.status_widget) return;
 		status = await readStatus(cwd);
 		if (!status) return;
 		lastSeedsDir = status.seedsDir;
 		lastIssuesMtimeMs = status.mtimeMs;
-		ui.setStatus(STATUS_KEY, formatStatusText(status.counts));
+		ui.setStatus(STATUS_KEY, composeStatus(status.counts, currentIssueId));
 	}
 
 	async function refreshReadyCache(cwd: string): Promise<void> {
@@ -92,6 +147,11 @@ export default function piSeedsExtension(pi: ExtensionAPI): void {
 		readyItems = [];
 		lastSeedsDir = undefined;
 		lastIssuesMtimeMs = undefined;
+		sessionCwd = ctx.cwd;
+		sessionUi = ctx.hasUI ? ctx.ui : undefined;
+		// Rehydrate currentIssueId before refreshStatus so the first widget paint
+		// already carries the `working: <id>` prefix.
+		currentIssueId = collectPersistedCurrentIssueId(ctx.sessionManager.getEntries());
 
 		try {
 			resolved = await readPiConfig(ctx.cwd);
