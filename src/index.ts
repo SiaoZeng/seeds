@@ -105,6 +105,7 @@ async function registerAll(): Promise<void> {
 		import("./commands/unblock.ts"),
 		import("./commands/plan.ts"),
 		import("./commands/config.ts"),
+		import("./commands/setup.ts"),
 	]);
 
 	for (const mod of mods) {
