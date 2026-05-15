@@ -1,19 +1,30 @@
 // @os-eco/pi-seeds — pi-coding-agent extension that hard-wires seeds'
 // session_start / agent_end rituals into pi lifecycle events.
 //
-// Step 2 (seeds-3a2a) wires:
-//   • session_start — read pi config, render selected `sd prime` sections
-//     into a memo, compute status counts, set the widget
+// Wired today:
+//   • session_start — read pi config, render selected `sd prime` sections,
+//     compute status counts, refresh the ready-list cache, register the
+//     `#sd-*` autocomplete provider (seeds-3a2a + seeds-e9d0)
 //   • before_agent_start — append memoed sections to the system prompt
-//   • agent_end — stat .seeds/issues.jsonl mtime; refresh widget when changed
+//   • agent_end — stat .seeds/issues.jsonl mtime; refresh widget + ready cache
+//   • input — expand `#sd-<id>` references into a hidden <seeds-context>
+//     block, capped at pi.reference_expansion.max_refs (seeds-e9d0)
+//   • Tools — sd_create, sd_ready, sd_show, sd_update, sd_close, sd_dep,
+//     sd_search (seeds-adb1)
 //
 // Subsequent plan steps fill in:
-//   • seeds-adb1 — custom tools (sd_create, sd_ready, sd_show, sd_update, sd_close, sd_dep, sd_search)
-//   • seeds-e9d0 — autocomplete (#sd-* completion + reference expansion)
 //   • seeds-5103 — slash commands (/sd, /sd:ready, /sd:create, ...) + currentIssueId state
 //   • seeds-89d2 — sd setup pi recipe + pi-aware onboarding marker variant
 
 import type { ExtensionAPI, ExtensionUIContext } from "@earendil-works/pi-coding-agent";
+import { findSeedsDir } from "../../src/config.ts";
+import {
+	bindSeedsAutocomplete,
+	createSeedsAutocompleteFactory,
+	type ReadyCache,
+	type ReadyItem,
+	readReadyItems,
+} from "./lib/autocomplete.ts";
 import { type ResolvedPiConfig, readPiConfig } from "./lib/config.ts";
 import { buildPrimeInjection } from "./lib/prime.ts";
 import {
@@ -37,12 +48,40 @@ export default function piSeedsExtension(pi: ExtensionAPI): void {
 	let resolved: ResolvedPiConfig | undefined;
 	let primedInjection: string | undefined;
 	let status: StatusSnapshot | undefined;
+	let readyItems: ReadyItem[] = [];
+	let autocompleteRegistered = false;
+	// Tracked independently of `status` so cache invalidation works even when
+	// status_widget is disabled.
+	let lastSeedsDir: string | undefined;
+	let lastIssuesMtimeMs: number | undefined;
+
+	const readyCache: ReadyCache = { get: () => readyItems };
+
+	// Reference expansion fires from pi.on("input"), which is registered at
+	// load time. It reads `resolved` from this closure so it stays a no-op
+	// until session_start populates the config (or when seeds isn't initialized).
+	bindSeedsAutocomplete(pi, {
+		cache: readyCache,
+		getMaxRefs: () => resolved?.reference_expansion.max_refs ?? 0,
+		isEnabled: () => resolved !== undefined,
+	});
 
 	async function refreshStatus(cwd: string, ui: ExtensionUIContext): Promise<void> {
 		if (!resolved?.status_widget) return;
 		status = await readStatus(cwd);
 		if (!status) return;
+		lastSeedsDir = status.seedsDir;
+		lastIssuesMtimeMs = status.mtimeMs;
 		ui.setStatus(STATUS_KEY, formatStatusText(status.counts));
+	}
+
+	async function refreshReadyCache(cwd: string): Promise<void> {
+		const items = await readReadyItems(cwd);
+		readyItems = items ?? [];
+		if (lastSeedsDir) {
+			const mtime = readIssuesMtime(lastSeedsDir);
+			if (mtime !== undefined) lastIssuesMtimeMs = mtime;
+		}
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
@@ -50,12 +89,21 @@ export default function piSeedsExtension(pi: ExtensionAPI): void {
 		resolved = undefined;
 		primedInjection = undefined;
 		status = undefined;
+		readyItems = [];
+		lastSeedsDir = undefined;
+		lastIssuesMtimeMs = undefined;
 
 		try {
 			resolved = await readPiConfig(ctx.cwd);
 		} catch {
 			// Seeds not initialized in this project — extension stays inert.
 			return;
+		}
+
+		try {
+			lastSeedsDir = await findSeedsDir(ctx.cwd);
+		} catch {
+			// already caught above
 		}
 
 		if (resolved.auto_prime && resolved.prime.sections.length > 0) {
@@ -74,6 +122,17 @@ export default function piSeedsExtension(pi: ExtensionAPI): void {
 				// best-effort
 			}
 		}
+
+		try {
+			await refreshReadyCache(ctx.cwd);
+		} catch {
+			// best-effort — autocomplete just shows an empty list.
+		}
+
+		if (!autocompleteRegistered) {
+			ctx.ui.addAutocompleteProvider(createSeedsAutocompleteFactory(readyCache));
+			autocompleteRegistered = true;
+		}
 	});
 
 	pi.on("before_agent_start", (event) => {
@@ -85,16 +144,16 @@ export default function piSeedsExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.on("agent_end", async (_event, ctx) => {
-		if (!resolved?.status_widget) return;
+		if (!resolved) return;
 		if (!resolved.cache.invalidate_on_write) return;
-		const seedsDir = status?.seedsDir;
-		if (!seedsDir) {
-			await refreshStatus(ctx.cwd, ctx.ui);
-			return;
-		}
-		const currentMtime = readIssuesMtime(seedsDir);
+		if (!lastSeedsDir) return;
+		const currentMtime = readIssuesMtime(lastSeedsDir);
 		if (currentMtime === undefined) return;
-		if (status && currentMtime === status.mtimeMs) return;
-		await refreshStatus(ctx.cwd, ctx.ui);
+		if (currentMtime === lastIssuesMtimeMs) return;
+		if (resolved.status_widget) {
+			await refreshStatus(ctx.cwd, ctx.ui);
+		}
+		await refreshReadyCache(ctx.cwd);
+		lastIssuesMtimeMs = currentMtime;
 	});
 }
