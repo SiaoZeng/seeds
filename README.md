@@ -133,7 +133,10 @@ See [Planning](#planning) below for the end-to-end workflow.
 | Command | Description |
 |---------|-------------|
 | `sd prime` | Output AI agent context (`--compact`, `--json` emits typed `sections`) |
-| `sd onboard` | Add seeds section to CLAUDE.md / AGENTS.md |
+| `sd onboard` | Add seeds section to CLAUDE.md / AGENTS.md (picks a pi-aware variant when `.pi/settings.json` lists `@os-eco/seeds-cli`) |
+| `sd setup pi` | Wire the in-tree `@os-eco/pi-seeds` extension into a project's pi runtime (`--check`, `--remove`) |
+
+For the full pi-coding-agent integration (auto-prime, status widget, custom `sd_*` tools, `#sd-*` autocomplete, `/sd*` slash commands), see [`extensions/pi/README.md`](./extensions/pi/README.md).
 
 ### Utility
 

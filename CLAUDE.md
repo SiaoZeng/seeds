@@ -33,9 +33,15 @@ seeds/
       ci.yml                  # lint + typecheck + test on push/PR
       publish.yml             # CI publish: auto-tag + GitHub release + npm publish
   scripts/
-    version-bump.ts           # Bump version in package.json + src/index.ts
+    version-bump.ts           # Bump version in package.json + src/version.ts
+  extensions/
+    pi/                       # @os-eco/pi-seeds extension (pi-coding-agent runtime)
+      index.ts                # entry: lifecycle hooks + tools + slash commands
+      lib/                    # autocomplete, commands, config, prime, status, tools
+      README.md
   src/
-    index.ts                  # CLI entry + command router + VERSION constant
+    index.ts                  # CLI entry + command router
+    version.ts                # VERSION constant (importable without CLI side-effects)
     types.ts                  # Issue, Template, Config, constants
     store.ts                  # JSONL read/write/lock/atomic
     id.ts                     # ID generation
@@ -69,6 +75,7 @@ seeds/
       upgrade.ts              # sd upgrade
       completions.ts          # sd completions
       config.ts               # sd config schema/show/set/unset
+      setup.ts                # sd setup pi (and future recipes)
     markers.test.ts           # Marker section tests
     store.test.ts             # Core data layer tests
     id.test.ts                # ID generation tests
@@ -86,6 +93,7 @@ seeds/
       unblock.test.ts
       sync.test.ts
       config.test.ts
+      setup.test.ts
     suggestions.test.ts       # Typo suggestion tests
     timing.test.ts            # --timing flag tests
 ```
@@ -321,7 +329,7 @@ interface Issue {
 
 Version lives in two locations (verified in sync by CI):
 - `package.json` — `"version"` field
-- `src/index.ts` — `const VERSION = "X.Y.Z"`
+- `src/version.ts` — `export const VERSION = "X.Y.Z"` (imported by `src/index.ts` and by extensions without triggering CLI side-effects)
 
 Bump via: `bun run version:bump <major|minor|patch>`
 
