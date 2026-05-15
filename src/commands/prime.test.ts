@@ -103,4 +103,118 @@ describe("sd prime", () => {
 		const { stdout } = await run(["prime", "--compact"], tmpDir);
 		expect(stdout).toContain("sd plan");
 	});
+
+	test("--json emits structured sections for full mode", async () => {
+		const { stdout, exitCode } = await run(["prime", "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as {
+			success: boolean;
+			command: string;
+			content: string;
+			sections: {
+				mode: string;
+				title: string;
+				closeProtocol: { steps: string[]; warning: string; footer: string };
+				rules: string[];
+				commandGroups: Array<{
+					name: string;
+					commands: Array<{ command: string; description: string }>;
+					notes?: string[];
+				}>;
+				workflows: Array<{ name: string; commands: string[] }>;
+			};
+		};
+		expect(result.success).toBe(true);
+		expect(result.sections.mode).toBe("full");
+		expect(result.sections.title).toBe("Seeds Workflow Context");
+
+		// Close protocol has 5 steps.
+		expect(result.sections.closeProtocol.steps).toHaveLength(5);
+		expect(result.sections.closeProtocol.steps[0]).toContain("sd close");
+
+		// Rules are non-empty.
+		expect(result.sections.rules.length).toBeGreaterThan(0);
+
+		// Command groups mirror markdown headings.
+		const groupNames = result.sections.commandGroups.map((g) => g.name);
+		expect(groupNames).toContain("Finding Work");
+		expect(groupNames).toContain("Creating & Updating");
+		expect(groupNames).toContain("Dependencies & Blocking");
+		expect(groupNames).toContain("Labels");
+		expect(groupNames).toContain("Sync & Project Health");
+		expect(groupNames).toContain("Planning");
+
+		// Each command has a structured shape.
+		const findingWork = result.sections.commandGroups.find((g) => g.name === "Finding Work");
+		expect(findingWork).toBeDefined();
+		const ready = findingWork?.commands.find((c) => c.command === "sd ready");
+		expect(ready?.description).toBe("Show issues ready to work (no blockers)");
+
+		// Planning group carries the explanatory note.
+		const planning = result.sections.commandGroups.find((g) => g.name === "Planning");
+		expect(planning?.notes?.[0]).toContain("sd plan");
+
+		// Workflows expose name + shell commands.
+		const wfNames = result.sections.workflows.map((w) => w.name);
+		expect(wfNames).toContain("Starting work");
+		expect(wfNames).toContain("Completing work");
+		const starting = result.sections.workflows.find((w) => w.name === "Starting work");
+		expect(starting?.commands[0]).toContain("sd ready");
+
+		// Backward compat: content still present and matches markdown.
+		expect(result.content).toContain("Seeds Workflow Context");
+		expect(result.content).toContain("Finding Work");
+	});
+
+	test("--json --compact emits compact-mode sections", async () => {
+		const { stdout, exitCode } = await run(["prime", "--json", "--compact"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as {
+			sections: {
+				mode: string;
+				title: string;
+				commands: Array<{ command: string; description: string }>;
+				planningNote: string;
+				closingNote: string;
+			};
+			content: string;
+		};
+		expect(result.sections.mode).toBe("compact");
+		expect(result.sections.title).toBe("Seeds Quick Reference");
+		expect(result.sections.commands.length).toBeGreaterThan(0);
+		expect(result.sections.commands.some((c) => c.command === "sd ready")).toBe(true);
+		expect(result.sections.planningNote).toContain("sd plan");
+		expect(result.sections.closingNote).toContain("sd sync");
+		expect(result.content).toContain("Seeds Quick Reference");
+	});
+
+	test("--json with custom PRIME.md sets sections to null", async () => {
+		await initSeeds(tmpDir);
+		await Bun.write(join(tmpDir, ".seeds", "PRIME.md"), "my custom agent context");
+		const { stdout, exitCode } = await run(["prime", "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as {
+			success: boolean;
+			content: string;
+			sections: unknown;
+		};
+		expect(result.success).toBe(true);
+		expect(result.sections).toBeNull();
+		expect(result.content).toBe("my custom agent context");
+	});
+
+	test("--export --json emits structured sections regardless of custom PRIME.md", async () => {
+		await initSeeds(tmpDir);
+		await Bun.write(join(tmpDir, ".seeds", "PRIME.md"), "custom prime content");
+		const { stdout, exitCode } = await run(["prime", "--export", "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as {
+			sections: { mode: string } | null;
+			content: string;
+		};
+		expect(result.sections).not.toBeNull();
+		expect(result.sections?.mode).toBe("full");
+		expect(result.content).toContain("Seeds Workflow Context");
+		expect(result.content).not.toContain("custom prime content");
+	});
 });

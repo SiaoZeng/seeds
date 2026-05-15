@@ -132,7 +132,7 @@ See [Planning](#planning) below for the end-to-end workflow.
 
 | Command | Description |
 |---------|-------------|
-| `sd prime` | Output AI agent context (`--compact`) |
+| `sd prime` | Output AI agent context (`--compact`, `--json` emits typed `sections`) |
 | `sd onboard` | Add seeds section to CLAUDE.md / AGENTS.md |
 
 ### Utility

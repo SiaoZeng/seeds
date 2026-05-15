@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sd prime --json` now exposes a typed `sections` field alongside the existing `content` blob, so TUIs, slash-command palettes, and config-UI surfaces can render rules/commands/workflows structurally instead of dumping the entire markdown into context. The shape mirrors the markdown headings: `closeProtocol.steps[]`, `rules[]`, `commandGroups[]` (each with `name`, `commands[]`, optional `notes[]`), and `workflows[]` (each with `name` + shell `commands[]`). `--compact --json` returns a smaller compact-mode payload with the quick-reference command list, planning note, and closing note. The structured data is now the source of truth — markdown is rendered from it, so the two stay in sync. Backwards compatible: `content` is still emitted, and existing non-`--json` output is byte-identical. When a project-local `.seeds/PRIME.md` overrides the default, `sections` is `null` since custom markdown is opaque to seeds. (seeds-e445)
+
 ## [0.4.5] - 2026-05-14
 
 ### Added
