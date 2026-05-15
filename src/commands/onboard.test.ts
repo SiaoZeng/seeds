@@ -207,4 +207,54 @@ describe("sd onboard", () => {
 		const matches = content.match(/### Planning/g) ?? [];
 		expect(matches.length).toBe(1);
 	});
+
+	test("schema marker is at version 5 (pi variant landed)", async () => {
+		await initSeeds(tmpDir);
+		await run(["onboard"], tmpDir);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(content).toContain("<!-- seeds-onboard-schema:5 -->");
+	});
+
+	test("auto-detects pi variant when .pi/settings.json lists seeds-cli", async () => {
+		await initSeeds(tmpDir);
+		await Bun.write(
+			join(tmpDir, ".pi", "settings.json"),
+			`${JSON.stringify({ packages: ["@os-eco/seeds-cli"] }, null, 2)}\n`,
+		);
+		const { exitCode } = await run(["onboard"], tmpDir);
+		expect(exitCode).toBe(0);
+		const content = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(content).toContain("seeds-onboard-schema:5:pi");
+		expect(content).toContain("@os-eco/pi-seeds");
+	});
+
+	test("re-running onboard after pi install keeps the pi variant", async () => {
+		await initSeeds(tmpDir);
+		await Bun.write(
+			join(tmpDir, ".pi", "settings.json"),
+			`${JSON.stringify({ packages: ["@os-eco/seeds-cli"] }, null, 2)}\n`,
+		);
+		await run(["onboard"], tmpDir);
+		const first = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		await run(["onboard"], tmpDir);
+		const second = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(second).toBe(first);
+		expect(second).toContain("seeds-onboard-schema:5:pi");
+	});
+
+	test("--check after install reports current; mismatched variant reports outdated", async () => {
+		await initSeeds(tmpDir);
+		// Install bare snippet (no pi).
+		await run(["onboard"], tmpDir);
+		const first = await run(["onboard", "--check", "--json"], tmpDir);
+		expect((JSON.parse(first.stdout) as { status: string }).status).toBe("current");
+
+		// Now flip on pi — bare schema marker should now read as outdated.
+		await Bun.write(
+			join(tmpDir, ".pi", "settings.json"),
+			`${JSON.stringify({ packages: ["@os-eco/seeds-cli"] }, null, 2)}\n`,
+		);
+		const second = await run(["onboard", "--check", "--json"], tmpDir);
+		expect((JSON.parse(second.stdout) as { status: string }).status).toBe("outdated");
+	});
 });

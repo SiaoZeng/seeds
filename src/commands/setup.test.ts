@@ -42,12 +42,13 @@ describe("sd setup", () => {
 		expect(stderr).toContain("Not in a seeds project");
 	});
 
-	test("--list runs cleanly inside a seeds project (no builtins yet)", async () => {
+	test("--list shows built-in pi recipe", async () => {
 		await initSeeds(tmpDir);
 		const { exitCode, stdout } = await run(["setup", "--list"], tmpDir);
 		expect(exitCode).toBe(0);
-		// No built-in recipes ship in step 1.
-		expect(stdout).toContain("No providers available yet.");
+		expect(stdout).toContain("Available providers");
+		expect(stdout).toContain("pi");
+		expect(stdout).toContain("built-in");
 	});
 
 	test("--list --json emits structured providers array", async () => {
@@ -62,6 +63,9 @@ describe("sd setup", () => {
 		expect(result.success).toBe(true);
 		expect(result.action).toBe("list");
 		expect(Array.isArray(result.providers)).toBe(true);
+		expect(result.providers).toEqual(
+			expect.arrayContaining([expect.objectContaining({ name: "pi", source: "builtin" })]),
+		);
 	});
 
 	test("no provider and no flags exits non-zero", async () => {
@@ -92,5 +96,132 @@ describe("sd setup", () => {
 		const { stdout, exitCode } = await run(["--help"], tmpDir);
 		expect(exitCode).toBe(0);
 		expect(stdout).toContain("setup");
+	});
+});
+
+describe("sd setup pi", () => {
+	test("install writes .pi/settings.json and flips marker to :pi", async () => {
+		await initSeeds(tmpDir);
+		const { exitCode, stdout } = await run(["setup", "pi"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("Installed Pi integration");
+
+		const settings = JSON.parse(await Bun.file(join(tmpDir, ".pi", "settings.json")).text()) as {
+			packages: string[];
+		};
+		expect(settings.packages).toEqual(["@os-eco/seeds-cli"]);
+
+		const claude = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(claude).toContain("<!-- seeds:start -->");
+		expect(claude).toContain("seeds-onboard-schema:5:pi");
+		// Short pi-aware variant should reference the extension, not the
+		// `sd prime` ritual the bare snippet leads with.
+		expect(claude).toContain("@os-eco/pi-seeds");
+		expect(claude).not.toMatch(/At the start of every session/);
+	});
+
+	test("install is idempotent — second run is a no-op", async () => {
+		await initSeeds(tmpDir);
+		await run(["setup", "pi"], tmpDir);
+		const firstSettings = await Bun.file(join(tmpDir, ".pi", "settings.json")).text();
+		const firstClaude = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+
+		const { exitCode, stdout } = await run(["setup", "pi"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("already installed");
+
+		expect(await Bun.file(join(tmpDir, ".pi", "settings.json")).text()).toBe(firstSettings);
+		expect(await Bun.file(join(tmpDir, "CLAUDE.md")).text()).toBe(firstClaude);
+	});
+
+	test("--check returns up_to_date after install", async () => {
+		await initSeeds(tmpDir);
+		await run(["setup", "pi"], tmpDir);
+		const { exitCode, stdout } = await run(["setup", "pi", "--check", "--json"], tmpDir);
+		expect(exitCode).toBe(0);
+		const result = JSON.parse(stdout) as { success: boolean; action: string; message: string };
+		expect(result.success).toBe(true);
+		expect(result.action).toBe("check");
+		expect(result.message).toContain("Pi integration installed");
+	});
+
+	test("--check returns not_installed before install", async () => {
+		await initSeeds(tmpDir);
+		const { exitCode, stdout } = await run(["setup", "pi", "--check", "--json"], tmpDir);
+		expect(exitCode).toBe(1);
+		const result = JSON.parse(stdout) as { success: boolean; message: string };
+		expect(result.success).toBe(false);
+		expect(result.message).toContain(".pi/settings.json not found");
+	});
+
+	test("--remove reverts both legs", async () => {
+		await initSeeds(tmpDir);
+		await run(["setup", "pi"], tmpDir);
+		const { exitCode, stdout } = await run(["setup", "pi", "--remove"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("Removed pi integration");
+
+		// Settings file deleted (was effectively empty after removing the package).
+		const settingsExists = await Bun.file(join(tmpDir, ".pi", "settings.json")).exists();
+		expect(settingsExists).toBe(false);
+
+		// CLAUDE.md reverted to bare snippet — marker drops the :pi suffix.
+		const claude = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(claude).toContain("seeds-onboard-schema:5");
+		expect(claude).not.toContain("seeds-onboard-schema:5:pi");
+		expect(claude).toContain("At the start of every session");
+
+		const recheck = await run(["setup", "pi", "--check", "--json"], tmpDir);
+		expect(recheck.exitCode).toBe(1);
+	});
+
+	test("install preserves unrelated keys in .pi/settings.json", async () => {
+		await initSeeds(tmpDir);
+		await Bun.write(
+			join(tmpDir, ".pi", "settings.json"),
+			`${JSON.stringify({ theme: "dark", packages: ["@other/pkg"] }, null, 2)}\n`,
+		);
+
+		const { exitCode } = await run(["setup", "pi"], tmpDir);
+		expect(exitCode).toBe(0);
+
+		const settings = JSON.parse(await Bun.file(join(tmpDir, ".pi", "settings.json")).text()) as {
+			theme: string;
+			packages: string[];
+		};
+		expect(settings.theme).toBe("dark");
+		expect(settings.packages).toEqual(["@other/pkg", "@os-eco/seeds-cli"]);
+	});
+
+	test("install with no CLAUDE.md creates one with the pi variant", async () => {
+		await initSeeds(tmpDir);
+		const { exitCode } = await run(["setup", "pi"], tmpDir);
+		expect(exitCode).toBe(0);
+		const claude = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(claude).toContain("seeds-onboard-schema:5:pi");
+	});
+
+	test("install upgrades existing bare snippet to pi variant", async () => {
+		await initSeeds(tmpDir);
+		// Pre-existing bare onboard snippet.
+		await run(["onboard"], tmpDir);
+		const before = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(before).toContain("seeds-onboard-schema:5");
+		expect(before).not.toContain("seeds-onboard-schema:5:pi");
+
+		const { exitCode } = await run(["setup", "pi"], tmpDir);
+		expect(exitCode).toBe(0);
+		const after = await Bun.file(join(tmpDir, "CLAUDE.md")).text();
+		expect(after).toContain("seeds-onboard-schema:5:pi");
+		// Should not duplicate the section.
+		const startCount = (after.match(/<!-- seeds:start -->/g) ?? []).length;
+		expect(startCount).toBe(1);
+	});
+
+	test("remove without prior install reports nothing-to-remove", async () => {
+		await initSeeds(tmpDir);
+		const { exitCode, stdout } = await run(["setup", "pi", "--remove"], tmpDir);
+		expect(exitCode).toBe(0);
+		expect(stdout).toContain("No pi integration found");
 	});
 });

@@ -1,4 +1,5 @@
 import { existsSync } from "node:fs";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import type { Command } from "commander";
 import { findSeedsDir, projectRootFromSeedsDir } from "../config.ts";
@@ -8,18 +9,32 @@ import { VERSION } from "../version.ts";
 
 // Schema version drives outdated-snippet detection. Bump when the snippet body changes
 // in a way agents should re-render. Independent of the package version so patch releases
-// don't mark every existing snippet as outdated.
-const ONBOARD_SCHEMA = 4;
-const SCHEMA_MARKER = `<!-- seeds-onboard-schema:${String(ONBOARD_SCHEMA)} -->`;
+// don't mark every existing snippet as outdated. Bumped to 5 when the pi-aware variant
+// landed (seeds-89d2) — the `:pi` suffix on the schema marker doubles as install-state
+// detection so `sd onboard` after `sd setup pi` keeps the short pi variant.
+const ONBOARD_SCHEMA = 5;
+
+// `@os-eco/seeds-cli` listed under `.pi/settings.json` → packages tells pi to
+// auto-load the extension on every session. Used by isPiInstalled() to pick the
+// pi-aware snippet variant when the recipe is installed.
+export const PI_PACKAGE_NAME = "@os-eco/seeds-cli";
+
+export type OnboardVariant = "pi" | undefined;
+
 const VERSION_MARKER = `<!-- seeds-onboard:v${VERSION} -->`;
 const LEGACY_VERSION_MARKER_PREFIX = "<!-- seeds-onboard-v:";
 
 const CANDIDATE_FILES = ["CLAUDE.md", ".claude/CLAUDE.md", "AGENTS.md"] as const;
 
-function onboardSnippet(): string {
+export function getSchemaMarker(variant?: OnboardVariant): string {
+	const suffix = variant === "pi" ? ":pi" : "";
+	return `<!-- seeds-onboard-schema:${String(ONBOARD_SCHEMA)}${suffix} -->`;
+}
+
+function buildStandardSnippet(): string {
 	return `## Issue Tracking (Seeds)
 ${VERSION_MARKER}
-${SCHEMA_MARKER}
+${getSchemaMarker()}
 
 This project uses [Seeds](https://github.com/jayminwest/seeds) v${VERSION} for git-native issue tracking.
 
@@ -55,6 +70,66 @@ Use \`sd plan\` when work is large or ambiguous enough that an LLM benefits from
 3. Sync and push: \`sd sync && git push\``;
 }
 
+// Short pi-aware snippet — shipped when `sd setup pi` is installed. The pi
+// extension handles prime / status widget / sd_* tools / autocomplete /
+// reference expansion / commands on lifecycle events, so the prose only needs
+// to point at the manual CLI escape hatches and config knobs.
+function buildPiSnippet(): string {
+	return `## Issue Tracking (Seeds)
+${VERSION_MARKER}
+${getSchemaMarker("pi")}
+
+This project uses [Seeds](https://github.com/jayminwest/seeds) v${VERSION} via the in-tree
+\`@os-eco/pi-seeds\` pi-coding-agent extension. The extension auto-primes on \`session_start\`,
+renders a \`sd: <n> ready / <n> in-progress / <n> blocked\` status widget, registers
+\`sd_create\` / \`sd_ready\` / \`sd_show\` / \`sd_update\` / \`sd_close\` / \`sd_dep\` / \`sd_search\`
+custom tools, expands \`#sd-<id>\` references on send, and ships \`/sd\`, \`/sd:ready\`,
+\`/sd:create\`, \`/sd:show\`, \`/sd:close\`, \`/sd:claim\` slash commands.
+
+**Manual escape hatches** (rarely needed — the extension handles the rituals):
+
+- \`sd ready\` — Find unblocked work from the shell.
+- \`sd create --title "..."\` / \`sd close <id>\` — Create or close from the shell.
+- \`sd sync\` — Stage and commit \`.seeds/\` changes before \`git push\`.
+
+Configuration lives under \`pi.*\` in \`.seeds/config.yaml\`. Run \`sd setup pi --check\` to verify
+the install state; \`sd setup pi --remove\` reverts to the standalone CLI snippet.
+
+### Before You Finish
+1. Close completed issues: \`sd close <id>\`
+2. File issues for remaining work: \`sd create --title "..."\`
+3. Sync and push: \`sd sync && git push\``;
+}
+
+function getSnippet(variant?: OnboardVariant): string {
+	return variant === "pi" ? buildPiSnippet() : buildStandardSnippet();
+}
+
+// True when `.pi/settings.json` lists `@os-eco/seeds-cli` in its `packages`
+// array (either as a bare string or as an object form with `source`). Lets
+// `sd onboard` keep the pi-aware variant after `sd setup pi` without forcing
+// callers to thread the flag through every call site.
+export async function isPiInstalled(cwd: string): Promise<boolean> {
+	const settingsPath = join(cwd, ".pi", "settings.json");
+	if (!existsSync(settingsPath)) return false;
+	try {
+		const raw = await readFile(settingsPath, "utf-8");
+		const trimmed = raw.trim();
+		if (trimmed.length === 0) return false;
+		const parsed = JSON.parse(raw) as { packages?: unknown };
+		if (!Array.isArray(parsed.packages)) return false;
+		return parsed.packages.some(
+			(p) =>
+				p === PI_PACKAGE_NAME ||
+				(typeof p === "object" &&
+					p !== null &&
+					(p as { source?: unknown }).source === PI_PACKAGE_NAME),
+		);
+	} catch {
+		return false;
+	}
+}
+
 function findTargetFile(projectRoot: string): string | null {
 	for (const candidate of CANDIDATE_FILES) {
 		const fullPath = join(projectRoot, candidate);
@@ -65,51 +140,84 @@ function findTargetFile(projectRoot: string): string | null {
 	return null;
 }
 
-function detectStatus(content: string): "missing" | "current" | "outdated" {
+function detectStatus(
+	content: string,
+	variant?: OnboardVariant,
+): "missing" | "current" | "outdated" {
 	if (!hasMarkerSection(content)) return "missing";
 	// Legacy snippets used `seeds-onboard-v:N`. Always treat them as outdated so
 	// the next run upgrades them to the new schema/version markers.
 	if (content.includes(LEGACY_VERSION_MARKER_PREFIX)) return "outdated";
-	if (content.includes(SCHEMA_MARKER)) return "current";
+	// A snippet is "current" iff the schema marker matches the requested variant
+	// exactly. A bare snippet in a pi-installed project (or vice versa) is
+	// outdated so the next onboard run flips the variant.
+	if (content.includes(getSchemaMarker(variant))) return "current";
 	return "outdated";
 }
 
-export async function run(args: string[]): Promise<void> {
-	const jsonMode = args.includes("--json");
-	const stdoutMode = args.includes("--stdout");
-	const checkMode = args.includes("--check");
+export interface RunOnboardOptions {
+	cwd?: string;
+	stdoutMode?: boolean;
+	checkMode?: boolean;
+	jsonMode?: boolean;
+	// Force the snippet variant. Unset = auto-detect via isPiInstalled() so
+	// repeat `sd onboard` runs after `sd setup pi` keep the pi-aware copy.
+	variant?: OnboardVariant;
+	// Suppress stdout/stderr. Used when `sd setup pi` calls runOnboard
+	// internally to refresh the snippet — the recipe owns the user-facing
+	// message and runOnboard should not double-log.
+	silent?: boolean;
+}
 
-	const seedsDir = await findSeedsDir();
+export type OnboardAction = "created" | "updated" | "unchanged" | "appended";
+
+export interface OnboardResult {
+	action: OnboardAction | "checked";
+	file: string | null;
+	status?: "missing" | "current" | "outdated";
+}
+
+export async function runOnboard(options: RunOnboardOptions = {}): Promise<OnboardResult> {
+	const cwd = options.cwd ?? process.cwd();
+	const seedsDir = await findSeedsDir(cwd);
 	const projectRoot = projectRootFromSeedsDir(seedsDir);
 
+	const variant = options.variant ?? ((await isPiInstalled(projectRoot)) ? "pi" : undefined);
+	const snippet = getSnippet(variant);
+
 	const targetPath = findTargetFile(projectRoot);
-	const snippet = onboardSnippet();
 
 	// --check mode: report status only
-	if (checkMode) {
+	if (options.checkMode) {
 		if (!targetPath) {
-			if (jsonMode) {
-				outputJson({ success: true, command: "onboard", status: "missing", file: null });
-			} else {
-				console.log("Status: missing (no CLAUDE.md found)");
+			if (!options.silent) {
+				if (options.jsonMode) {
+					outputJson({ success: true, command: "onboard", status: "missing", file: null });
+				} else {
+					console.log("Status: missing (no CLAUDE.md found)");
+				}
 			}
-			return;
+			return { action: "checked", file: null, status: "missing" };
 		}
 		const content = await Bun.file(targetPath).text();
-		const status = detectStatus(content);
-		if (jsonMode) {
-			outputJson({ success: true, command: "onboard", status, file: targetPath });
-		} else {
-			console.log(`Status: ${status} (${targetPath})`);
+		const status = detectStatus(content, variant);
+		if (!options.silent) {
+			if (options.jsonMode) {
+				outputJson({ success: true, command: "onboard", status, file: targetPath });
+			} else {
+				console.log(`Status: ${status} (${targetPath})`);
+			}
 		}
-		return;
+		return { action: "checked", file: targetPath, status };
 	}
 
 	// --stdout mode: print what would be written
-	if (stdoutMode) {
-		process.stdout.write(wrapInMarkers(snippet));
-		process.stdout.write("\n");
-		return;
+	if (options.stdoutMode) {
+		if (!options.silent) {
+			process.stdout.write(wrapInMarkers(snippet));
+			process.stdout.write("\n");
+		}
+		return { action: "unchanged", file: null };
 	}
 
 	// Default mode: write to file
@@ -119,47 +227,63 @@ export async function run(args: string[]): Promise<void> {
 
 	if (!fileExists) {
 		await Bun.write(filePath, `${wrappedSnippet}\n`);
-		if (jsonMode) {
-			outputJson({ success: true, command: "onboard", action: "created", file: filePath });
-		} else {
-			printSuccess(`Created ${filePath} with seeds section`);
+		if (!options.silent) {
+			if (options.jsonMode) {
+				outputJson({ success: true, command: "onboard", action: "created", file: filePath });
+			} else {
+				printSuccess(`Created ${filePath} with seeds section`);
+			}
 		}
-		return;
+		return { action: "created", file: filePath };
 	}
 
 	const content = await Bun.file(filePath).text();
-	const status = detectStatus(content);
+	const status = detectStatus(content, variant);
 
 	if (status === "current") {
-		if (jsonMode) {
-			outputJson({ success: true, command: "onboard", action: "unchanged", file: filePath });
-		} else {
-			printSuccess("Seeds section is already up to date");
+		if (!options.silent) {
+			if (options.jsonMode) {
+				outputJson({ success: true, command: "onboard", action: "unchanged", file: filePath });
+			} else {
+				printSuccess("Seeds section is already up to date");
+			}
 		}
-		return;
+		return { action: "unchanged", file: filePath };
 	}
 
 	if (status === "outdated") {
 		const updated = replaceMarkerSection(content, snippet);
 		if (updated) {
 			await Bun.write(filePath, updated);
-			if (jsonMode) {
-				outputJson({ success: true, command: "onboard", action: "updated", file: filePath });
-			} else {
-				printSuccess(`Updated seeds section in ${filePath}`);
+			if (!options.silent) {
+				if (options.jsonMode) {
+					outputJson({ success: true, command: "onboard", action: "updated", file: filePath });
+				} else {
+					printSuccess(`Updated seeds section in ${filePath}`);
+				}
 			}
 		}
-		return;
+		return { action: "updated", file: filePath };
 	}
 
 	// status === "missing": append
 	const separator = content.endsWith("\n") ? "\n" : "\n\n";
 	await Bun.write(filePath, `${content}${separator}${wrappedSnippet}\n`);
-	if (jsonMode) {
-		outputJson({ success: true, command: "onboard", action: "appended", file: filePath });
-	} else {
-		printSuccess(`Added seeds section to ${filePath}`);
+	if (!options.silent) {
+		if (options.jsonMode) {
+			outputJson({ success: true, command: "onboard", action: "appended", file: filePath });
+		} else {
+			printSuccess(`Added seeds section to ${filePath}`);
+		}
 	}
+	return { action: "appended", file: filePath };
+}
+
+export async function run(args: string[]): Promise<void> {
+	const jsonMode = args.includes("--json");
+	const stdoutMode = args.includes("--stdout");
+	const checkMode = args.includes("--check");
+	await runOnboard({ jsonMode, stdoutMode, checkMode });
 }
 
 export function register(program: Command): void {
