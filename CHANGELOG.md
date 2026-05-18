@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.7] - 2026-05-18
+
 ### Added
 - `sd plan submit` accepts adoption-only steps that omit `title`. A step that supplies `existing_seed` no longer needs a `title` field — the adopted seed's title is preserved verbatim either way, so requiring a duplicate value forced callers to look up titles they didn't otherwise need. Fresh-spawn steps still require `title`; the post-AJV pass in `plan-schema.ts` enforces "title XOR existing_seed" per step and emits a path-anchored error when neither is set. Unlocks the warren §11.Q synthesis flow, where a Plot's already-attached seeds are bound to a new parent plan with no fresh spawns: warren can submit `{ existing_seed: "<id>" }` per child without fabricating titles. Plan-row output (`plans.jsonl`) is byte-compatible with prior adoption submits — `children` is still the projected id list, and `adoptedChildren` is still tracked. (seeds-5583, warren §11.Q upstream blocker)
 
