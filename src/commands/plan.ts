@@ -349,7 +349,10 @@ async function runPrompt(
 }
 
 interface SubmittedStep {
-	title: string;
+	// Title is optional only when `existing_seed` is set (adoption-only steps).
+	// The post-AJV validator in plan-schema.ts enforces the invariant; reaching
+	// the fresh-spawn branch implies `title` is present.
+	title?: string;
 	type?: string;
 	priority?: number;
 	blocks?: number[];
@@ -399,7 +402,8 @@ function validatePlanTemplateRefs(
 		if (!ref) continue;
 		if (!templates[ref]) {
 			const available = Object.keys(templates).join(", ");
-			return `step ${i + 1} (${step.title}): plan_template '${ref}' is not defined. Available: ${available}. Add it under plan_templates: in .seeds/config.yaml.`;
+			const label = step.title ?? "untitled";
+			return `step ${i + 1} (${label}): plan_template '${ref}' is not defined. Available: ${available}. Add it under plan_templates: in .seeds/config.yaml.`;
 		}
 	}
 	return null;
@@ -610,6 +614,10 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 					continue;
 				}
 				const stepType = (step.type ?? "task") as Issue["type"];
+				// Non-adopting spawn path: validateStepTitleOrAdopt guarantees title
+				// is present here (else this step would carry existing_seed and the
+				// adoption branch above would have handled it).
+				if (!step.title) continue;
 				const issue: Issue = {
 					id: childId,
 					title: step.title,
@@ -847,7 +855,9 @@ function validateAdoptions(args: AdoptionValidationArgs): Map<number, AdoptionEn
 		const step = steps[i];
 		if (!step?.existing_seed) continue;
 		const adoptId = step.existing_seed;
-		const label = `step ${i + 1} (${step.title})`;
+		// Step titles are optional on adoption-only steps (seeds-5583), so the
+		// error label falls back to the adopted seed id when title is absent.
+		const label = step.title ? `step ${i + 1} (${step.title})` : `step ${i + 1} (adopt ${adoptId})`;
 		if (step.plan_template) {
 			throw new Error(
 				`${label}: existing_seed and plan_template are mutually exclusive — adoption replaces spawning, so a sub-plan template cannot apply.`,
@@ -876,7 +886,10 @@ function validateAdoptions(args: AdoptionValidationArgs): Map<number, AdoptionEn
 				`${label}: existing_seed ${adoptId} is already attached to plan ${seed.plan_id}.`,
 			);
 		}
-		if (seed.title !== step.title) {
+		// The mismatch warning only fires when the author supplied an explicit
+		// step.title that disagrees with the adopted seed. Omitted titles
+		// (synthesis-style submits) are not a mismatch.
+		if (step.title && seed.title !== step.title) {
 			process.stderr.write(
 				`⚠ step ${i + 1}: existing_seed ${adoptId} title "${seed.title}" differs from step.title "${step.title}"; seed title is preserved.\n`,
 			);
@@ -1039,6 +1052,8 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 			continue;
 		}
 		const stepType = (step.type ?? "task") as Issue["type"];
+		// Non-adopting spawn path: validateStepTitleOrAdopt guarantees title.
+		if (!step.title) continue;
 		const issue: Issue = {
 			id: childId,
 			title: step.title,

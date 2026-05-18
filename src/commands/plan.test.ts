@@ -674,6 +674,77 @@ describe("sd plan submit: existing_seed adoption (seeds-24c6 / pl-43ff)", () => 
 		expect(after.length).toBe(before.length);
 		expect(plansAfter.length).toBe(plansBefore.length);
 	});
+
+	// seeds-5583 / warren §11.Q — synthesis: mint a parent seed + plan whose
+	// children are entirely existing seeds, with no titles on the steps.
+	test("synthesis: steps may omit title when existing_seed is set", async () => {
+		const parent = await createSeed(tmpDir, "Synthesis parent");
+		const a = await createSeed(tmpDir, "Adoptee A");
+		const b = await createSeed(tmpDir, "Adoptee B");
+		const c = await createSeed(tmpDir, "Adoptee C");
+
+		const plan = validPlanFor();
+		plan.sections.steps = [{ existing_seed: a }, { existing_seed: b }, { existing_seed: c }];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stdout, stderr, exitCode } = await run(
+			["plan", "submit", parent, "--plan", planPath, "--json"],
+			tmpDir,
+		);
+		expect(exitCode).toBe(0);
+		// No title-mismatch warnings — titles weren't supplied.
+		expect(stderr).not.toContain("differs from step.title");
+
+		const result = JSON.parse(stdout) as { children: string[]; plan_id: string };
+		// children projection is byte-compatible: just the adopted ids in order.
+		expect(result.children).toEqual([a, b, c]);
+
+		const issues = await readIssues();
+		const find = (id: string) => issues.find((i) => i.id === id);
+		// Each adoptee keeps its original title.
+		expect(find(a)?.title).toBe("Adoptee A");
+		expect(find(b)?.title).toBe("Adoptee B");
+		expect(find(c)?.title).toBe("Adoptee C");
+		// Plan link set on every adopted child.
+		expect(find(a)?.plan_id).toBe(result.plan_id);
+		expect(find(b)?.plan_id).toBe(result.plan_id);
+		expect(find(c)?.plan_id).toBe(result.plan_id);
+		// Plan row's adoptedChildren matches the children list (all adopted).
+		const plans = await readJsonl<{ id: string; adoptedChildren?: string[] }>(
+			join(tmpDir, ".seeds/plans.jsonl"),
+		);
+		expect(plans.find((p) => p.id === result.plan_id)?.adoptedChildren).toEqual([a, b, c]);
+	});
+
+	test("schema rejects a step missing both title and existing_seed", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		const plan = validPlanFor();
+		// Step lacks title AND existing_seed — should be caught pre-write.
+		plan.sections.steps = [
+			{ type: "task", priority: 2, blocks: [] },
+			{ title: "Other", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("title");
+		expect(stderr).toContain("existing_seed");
+	});
+
+	test("error label falls back to seed id when title is omitted", async () => {
+		const parent = await createSeed(tmpDir, "Parent");
+		// Adopt a non-existent id, with no title supplied. The error should
+		// reference the adopted id rather than `undefined`.
+		const plan = validPlanFor();
+		plan.sections.steps = [
+			{ existing_seed: "nope-9999" },
+			{ title: "Fresh", type: "task", priority: 2, blocks: [] },
+		];
+		const planPath = await writePlanFile(tmpDir, plan);
+		const { stderr, exitCode } = await run(["plan", "submit", parent, "--plan", planPath], tmpDir);
+		expect(exitCode).not.toBe(0);
+		expect(stderr).toContain("adopt nope-9999");
+		expect(stderr).not.toContain("(undefined)");
+	});
 });
 
 describe("sd plan adopt (seeds-2b93 / pl-43ff)", () => {

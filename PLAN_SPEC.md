@@ -291,7 +291,7 @@ Templates are declared in `.seeds/config.yaml` under `plan_templates:`. Each tem
 | ------------- | ---------------------------------- | ----------------------------------------------------------- |
 | `text`        | string                             | `min_length` optional.                                      |
 | `list`        | array                              | `item: text` or `item: { ...object spec... }`. `min` opt.   |
-| `steps`       | array of step objects              | Spawns child seeds 1:1. Step is `{title, type, priority, blocks: [step_index], plan_template?, existing_seed?}`. `blocks` uses 1-based step indices. `existing_seed` adopts an already-open seed instead of spawning a fresh child (see [Adoption and Release](#adoption-and-release)). |
+| `steps`       | array of step objects              | Spawns child seeds 1:1. Step is `{title?, type, priority, blocks: [step_index], plan_template?, existing_seed?}`. `blocks` uses 1-based step indices. `existing_seed` adopts an already-open seed instead of spawning a fresh child (see [Adoption and Release](#adoption-and-release)). `title` is required for fresh-spawn steps and optional for adoption-only steps (where the adopted seed's title is preserved). |
 | object spec   | nested record of named fields      | Each field has its own `kind` recursively.                  |
 
 A custom template:
@@ -381,6 +381,7 @@ Validation covers:
 - `min` on `list` and `steps` sections.
 - `steps[].blocks` references valid **1-based** step indices in the range `1..steps.length` (step 1 is the first step). `0` and out-of-range values are rejected with a clear "step indices are 1-based" error; self-references (step `n` listing `n` in its own `blocks`) are also rejected.
 - `steps[].existing_seed`, when present, is a non-empty string (AJV check). Existence, status, current-plan, parent-self, mutual exclusion with `plan_template`, and duplicate-across-steps checks run in a pre-write pass alongside the spawn pipeline — see [Adoption and Release](#adoption-and-release).
+- Each step declares either `title` (fresh spawn) or `existing_seed` (adoption). A step with both is allowed; the supplied `title` is used only for the mismatch warning. A step with neither is rejected (`step N must declare either 'title' (fresh spawn) or 'existing_seed' (adoption)`). This lets synthesis-style plans — where every child is an adoption — omit titles entirely.
 - Object-spec fields match their declared `kind`.
 - `template` name resolves in `plan_templates`.
 

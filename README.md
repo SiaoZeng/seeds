@@ -199,7 +199,7 @@ The LLM produces a submission JSON in the same shape, with concrete content. Eac
 }
 ```
 
-A step with `existing_seed: "<seed-id>"` adopts an already-open seed at that index instead of spawning a fresh child — see [Adopting existing seeds](#adopting-existing-seeds). `existing_seed` and `plan_template` are mutually exclusive on the same step.
+A step with `existing_seed: "<seed-id>"` adopts an already-open seed at that index instead of spawning a fresh child — see [Adopting existing seeds](#adopting-existing-seeds). On adoption-only steps the `title` field may be omitted; the adopted seed's title is preserved either way. `existing_seed` and `plan_template` are mutually exclusive on the same step.
 
 ```bash
 sd plan submit seeds-9c4d --plan plan.json

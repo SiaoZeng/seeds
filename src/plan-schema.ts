@@ -15,9 +15,13 @@ import { compileSchema, type ErrorEntry } from "./validation.ts";
 
 type JSONSchema = Record<string, unknown>;
 
+// Step.title is enforced by validateStepTitleOrAdopt below rather than the
+// AJV `required` list: adoption-only steps (existing_seed set, no spawn) may
+// omit `title` since the adopted seed's title is preserved verbatim. The
+// "either title or existing_seed" invariant runs as a post-AJV pass so the
+// error message points at the offending step path (seeds-5583 / warren §11.Q).
 const STEP_SCHEMA: JSONSchema = {
 	type: "object",
-	required: ["title"],
 	properties: {
 		title: { type: "string", minLength: 1 },
 		type: { type: "string", enum: ["task", "bug", "feature", "epic"] },
@@ -101,6 +105,7 @@ export function compilePlanTemplate(template: PlanTemplate): PlanValidator {
 		const ajvResult = ajv(data);
 		const errors: ErrorEntry[] = ajvResult.valid ? [] : [...ajvResult.diff.errors];
 		if (stepsKey) {
+			errors.push(...validateStepTitleOrAdopt(data, stepsKey));
 			errors.push(...validateStepBlocks(data, stepsKey));
 		}
 		if (errors.length === 0) return { valid: true };
@@ -113,6 +118,35 @@ function findStepsSectionKey(template: PlanTemplate): string | undefined {
 		if (v.kind === "steps") return k;
 	}
 	return undefined;
+}
+
+// Each step must declare either `title` (fresh spawn) or `existing_seed`
+// (adoption). Title is optional only when existing_seed is set, since the
+// adopted seed's title is preserved verbatim. Synthesis-style plans (warren
+// §11.Q) where every child is an adoption can therefore omit titles entirely.
+// (seeds-5583)
+function validateStepTitleOrAdopt(data: unknown, sectionKey: string): ErrorEntry[] {
+	const sections = (data as { sections?: unknown })?.sections;
+	if (!sections || typeof sections !== "object") return [];
+	const steps = (sections as Record<string, unknown>)[sectionKey];
+	if (!Array.isArray(steps)) return [];
+	const errors: ErrorEntry[] = [];
+	for (let i = 0; i < steps.length; i++) {
+		const step = steps[i];
+		if (!step || typeof step !== "object") continue;
+		const title = (step as { title?: unknown }).title;
+		const adopt = (step as { existing_seed?: unknown }).existing_seed;
+		const hasTitle = typeof title === "string" && title.length > 0;
+		const hasAdopt = typeof adopt === "string" && adopt.length > 0;
+		if (!hasTitle && !hasAdopt) {
+			errors.push({
+				path: `sections.${sectionKey}.${i}`,
+				code: "missing-title",
+				fix: `step ${i + 1} must declare either 'title' (fresh spawn) or 'existing_seed' (adoption)`,
+			});
+		}
+	}
+	return errors;
 }
 
 // step.blocks values are 1-based: step 1 is the first step, step N is the
