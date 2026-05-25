@@ -15,7 +15,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const jsonMode = fmt.mode === "json";
 	if (fmt.error) {
 		if (jsonMode) {
-			outputJson({ success: false, command: "blocked", error: fmt.error });
+			await outputJson({ success: false, command: "blocked", error: fmt.error });
 		} else {
 			console.error(fmt.error);
 		}
@@ -35,7 +35,12 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	switch (fmt.mode) {
 		case "json":
-			outputJson({ success: true, command: "blocked", issues: blocked, count: blocked.length });
+			await outputJson({
+				success: true,
+				command: "blocked",
+				issues: blocked,
+				count: blocked.length,
+			});
 			return;
 		case "ids":
 			for (const issue of blocked) console.log(issue.id);

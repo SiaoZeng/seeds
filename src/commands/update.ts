@@ -187,7 +187,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	}
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "update", issue: updated });
+		await outputJson({ success: true, command: "update", issue: updated });
 	} else {
 		printSuccess(`Updated ${id}`);
 	}

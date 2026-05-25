@@ -859,7 +859,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	// If config fails, skip remaining checks
 	if (configCheck.status === "fail") {
-		return reportResults(checks, jsonMode, verbose, fixMode, dir);
+		return await reportResults(checks, jsonMode, verbose, fixMode, dir);
 	}
 
 	checks.push(checkJsonlIntegrity(dir));
@@ -906,21 +906,21 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 				reChecks.push(checkStaleLocks(dir));
 				reChecks.push(checkGitattributes(dir));
 			}
-			return reportResults(reChecks, jsonMode, verbose, fixMode, dir, fixedItems);
+			return await reportResults(reChecks, jsonMode, verbose, fixMode, dir, fixedItems);
 		}
 	}
 
-	return reportResults(checks, jsonMode, verbose, fixMode, dir);
+	return await reportResults(checks, jsonMode, verbose, fixMode, dir);
 }
 
-function reportResults(
+async function reportResults(
 	checks: DoctorCheck[],
 	jsonMode: boolean,
 	verbose: boolean,
 	_fixMode: boolean,
 	_seedsDir: string,
 	fixedItems?: string[],
-): void {
+): Promise<void> {
 	const summary = {
 		pass: checks.filter((ch) => ch.status === "pass").length,
 		warn: checks.filter((ch) => ch.status === "warn").length,
@@ -928,7 +928,7 @@ function reportResults(
 	};
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: summary.fail === 0,
 			command: "doctor",
 			checks: checks.map((ch) => ({

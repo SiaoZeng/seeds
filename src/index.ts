@@ -175,11 +175,14 @@ async function main(): Promise<void> {
 
 const jsonMode = process.argv.includes("--json");
 
-main().catch((err: unknown) => {
+main().catch(async (err: unknown) => {
 	const msg = err instanceof Error ? err.message : String(err);
 	const cmd = process.argv[2];
 	if (jsonMode) {
-		console.log(JSON.stringify({ success: false, command: cmd, error: msg }));
+		await Bun.write(
+			Bun.stdout,
+			`${JSON.stringify({ success: false, command: cmd, error: msg })}\n`,
+		);
 	} else {
 		console.error(chalk.red(`Error: ${msg}`));
 	}

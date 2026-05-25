@@ -122,10 +122,10 @@ function displayValue(v: YamlValue): string {
 async function runSchema(jsonMode: boolean): Promise<void> {
 	const schema = configSchema();
 	if (jsonMode) {
-		console.log(JSON.stringify(schema));
+		await Bun.write(Bun.stdout, `${JSON.stringify(schema)}\n`);
 		return;
 	}
-	console.log(JSON.stringify(schema, null, 2));
+	await Bun.write(Bun.stdout, `${JSON.stringify(schema, null, 2)}\n`);
 }
 
 async function runShow(pathArg: string | undefined, jsonMode: boolean): Promise<void> {
@@ -139,19 +139,19 @@ async function runShow(pathArg: string | undefined, jsonMode: boolean): Promise<
 			throw new Error(`Path not found: ${pathArg}`);
 		}
 		if (jsonMode) {
-			outputJson({ success: true, command: "config show", path: pathArg, value });
+			await outputJson({ success: true, command: "config show", path: pathArg, value });
 		} else if (typeof value === "object" && value !== null && !Array.isArray(value)) {
 			process.stdout.write(stringifyYaml(value as Record<string, YamlValue>));
 		} else if (typeof value === "string") {
 			console.log(value);
 		} else {
-			console.log(JSON.stringify(value));
+			await Bun.write(Bun.stdout, `${JSON.stringify(value)}\n`);
 		}
 		return;
 	}
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "config show", config: raw });
+		await outputJson({ success: true, command: "config show", config: raw });
 	} else {
 		process.stdout.write(stringifyYaml(raw));
 	}
@@ -170,7 +170,7 @@ async function runSet(pathArg: string, valueArg: string, jsonMode: boolean): Pro
 	});
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "config set", path: pathArg, value });
+		await outputJson({ success: true, command: "config set", path: pathArg, value });
 	} else {
 		printSuccess(`Set ${accent(pathArg)} ${muted("=")} ${displayValue(value)}`);
 	}
@@ -190,7 +190,7 @@ async function runUnset(pathArg: string, jsonMode: boolean): Promise<void> {
 	});
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "config unset", path: pathArg, removed });
+		await outputJson({ success: true, command: "config unset", path: pathArg, removed });
 	} else if (removed) {
 		printSuccess(`Unset ${accent(pathArg)}`);
 	} else {

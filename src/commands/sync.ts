@@ -25,7 +25,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	if (!seedsDir && isInsideWorktree(process.cwd())) {
 		const msg = "Inside a git worktree — skipping commit. Issues are stored in the main repo.";
 		if (jsonMode) {
-			outputJson({
+			await outputJson({
 				success: true,
 				command: "sync",
 				committed: false,
@@ -47,7 +47,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	if (statusOnly) {
 		if (jsonMode) {
-			outputJson({ success: true, command: "sync", hasChanges: !!changed, changes: changed });
+			await outputJson({ success: true, command: "sync", hasChanges: !!changed, changes: changed });
 		} else {
 			if (changed) {
 				console.log("Uncommitted .seeds/ changes:");
@@ -61,7 +61,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	if (!changed) {
 		if (jsonMode) {
-			outputJson({
+			await outputJson({
 				success: true,
 				command: "sync",
 				committed: false,
@@ -77,7 +77,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		const date = new Date().toISOString().slice(0, 10);
 		const msg = `seeds: sync ${date}`;
 		if (jsonMode) {
-			outputJson({
+			await outputJson({
 				success: true,
 				command: "sync",
 				dryRun: true,
@@ -108,7 +108,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	}
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "sync", committed: true, message: msg });
+		await outputJson({ success: true, command: "sync", committed: true, message: msg });
 	} else {
 		console.log(`Committed: ${msg}`);
 	}

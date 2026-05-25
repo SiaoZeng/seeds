@@ -41,7 +41,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	});
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "block", issueId, blockerId });
+		await outputJson({ success: true, command: "block", issueId, blockerId });
 	} else {
 		console.log(`${accent(issueId)} ${muted("is now blocked by")} ${accent(blockerId)}`);
 	}

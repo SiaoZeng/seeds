@@ -192,7 +192,7 @@ export async function runOnboard(options: RunOnboardOptions = {}): Promise<Onboa
 		if (!targetPath) {
 			if (!options.silent) {
 				if (options.jsonMode) {
-					outputJson({ success: true, command: "onboard", status: "missing", file: null });
+					await outputJson({ success: true, command: "onboard", status: "missing", file: null });
 				} else {
 					console.log("Status: missing (no CLAUDE.md found)");
 				}
@@ -203,7 +203,7 @@ export async function runOnboard(options: RunOnboardOptions = {}): Promise<Onboa
 		const status = detectStatus(content, variant);
 		if (!options.silent) {
 			if (options.jsonMode) {
-				outputJson({ success: true, command: "onboard", status, file: targetPath });
+				await outputJson({ success: true, command: "onboard", status, file: targetPath });
 			} else {
 				console.log(`Status: ${status} (${targetPath})`);
 			}
@@ -229,7 +229,7 @@ export async function runOnboard(options: RunOnboardOptions = {}): Promise<Onboa
 		await Bun.write(filePath, `${wrappedSnippet}\n`);
 		if (!options.silent) {
 			if (options.jsonMode) {
-				outputJson({ success: true, command: "onboard", action: "created", file: filePath });
+				await outputJson({ success: true, command: "onboard", action: "created", file: filePath });
 			} else {
 				printSuccess(`Created ${filePath} with seeds section`);
 			}
@@ -243,7 +243,12 @@ export async function runOnboard(options: RunOnboardOptions = {}): Promise<Onboa
 	if (status === "current") {
 		if (!options.silent) {
 			if (options.jsonMode) {
-				outputJson({ success: true, command: "onboard", action: "unchanged", file: filePath });
+				await outputJson({
+					success: true,
+					command: "onboard",
+					action: "unchanged",
+					file: filePath,
+				});
 			} else {
 				printSuccess("Seeds section is already up to date");
 			}
@@ -257,7 +262,12 @@ export async function runOnboard(options: RunOnboardOptions = {}): Promise<Onboa
 			await Bun.write(filePath, updated);
 			if (!options.silent) {
 				if (options.jsonMode) {
-					outputJson({ success: true, command: "onboard", action: "updated", file: filePath });
+					await outputJson({
+						success: true,
+						command: "onboard",
+						action: "updated",
+						file: filePath,
+					});
 				} else {
 					printSuccess(`Updated seeds section in ${filePath}`);
 				}
@@ -271,7 +281,7 @@ export async function runOnboard(options: RunOnboardOptions = {}): Promise<Onboa
 	await Bun.write(filePath, `${content}${separator}${wrappedSnippet}\n`);
 	if (!options.silent) {
 		if (options.jsonMode) {
-			outputJson({ success: true, command: "onboard", action: "appended", file: filePath });
+			await outputJson({ success: true, command: "onboard", action: "appended", file: filePath });
 		} else {
 			printSuccess(`Added seeds section to ${filePath}`);
 		}

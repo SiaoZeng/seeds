@@ -108,7 +108,12 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	});
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "migrate-from-beads", written, skipped: skipped.length });
+		await outputJson({
+			success: true,
+			command: "migrate-from-beads",
+			written,
+			skipped: skipped.length,
+		});
 	} else {
 		console.log(`Migrated ${written} issues from beads.`);
 		if (skipped.length > 0) {

@@ -75,7 +75,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		});
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "tpl create", id: createdId });
+			await outputJson({ success: true, command: "tpl create", id: createdId });
 		} else {
 			printSuccess(`Created template ${createdId}: ${name}`);
 		}
@@ -112,7 +112,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		});
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "tpl step add", id: templateId, stepCount });
+			await outputJson({ success: true, command: "tpl step add", id: templateId, stepCount });
 		} else {
 			printSuccess(`Added step ${stepCount} to ${templateId}: "${title}"`);
 		}
@@ -123,7 +123,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	if (subcmd === "list") {
 		const templates = await readTemplates(dir);
 		if (jsonMode) {
-			outputJson({ success: true, command: "tpl list", templates, count: templates.length });
+			await outputJson({ success: true, command: "tpl list", templates, count: templates.length });
 		} else {
 			if (templates.length === 0) {
 				console.log("No templates.");
@@ -145,7 +145,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		if (!tpl) throw new Error(`Template not found: ${templateId}`);
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "tpl show", template: tpl });
+			await outputJson({ success: true, command: "tpl show", template: tpl });
 		} else {
 			console.log(`${accent.bold(tpl.id)}  ${tpl.name}`);
 			console.log(muted(`Steps (${tpl.steps.length}):`));
@@ -215,7 +215,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		});
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "tpl pour", ids: createdIds });
+			await outputJson({ success: true, command: "tpl pour", ids: createdIds });
 		} else {
 			printSuccess(`Poured template ${accent(templateId)} — created ${createdIds.length} issues`);
 			for (const id of createdIds) console.log(`  ${accent(id)}`);
@@ -233,7 +233,13 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 		if (convoyIssues.length === 0) {
 			if (jsonMode) {
-				outputJson({ success: true, command: "tpl status", templateId, total: 0, issues: [] });
+				await outputJson({
+					success: true,
+					command: "tpl status",
+					templateId,
+					total: 0,
+					issues: [],
+				});
 			} else {
 				console.log(`No issues found for convoy ${templateId}`);
 			}
@@ -258,7 +264,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		};
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "tpl status", status });
+			await outputJson({ success: true, command: "tpl status", status });
 		} else {
 			console.log(`${chalk.bold("Convoy:")} ${accent(templateId)}`);
 			console.log(`  ${muted("Total:")}       ${status.total}`);

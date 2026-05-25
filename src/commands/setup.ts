@@ -189,9 +189,9 @@ interface SetupOptions {
 	json?: boolean;
 }
 
-function emitError(msg: string, jsonMode: boolean): void {
+async function emitError(msg: string, jsonMode: boolean): Promise<void> {
 	if (jsonMode) {
-		outputJson({ success: false, command: "setup", error: msg });
+		await outputJson({ success: false, command: "setup", error: msg });
 	} else {
 		console.error(chalk.red(`Error: ${msg}`));
 	}
@@ -202,7 +202,7 @@ async function runList(jsonMode: boolean): Promise<void> {
 	const providers = BUILTIN_PROVIDER_NAMES.map((name) => ({ name, source: "builtin" as const }));
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "setup", action: "list", providers });
+		await outputJson({ success: true, command: "setup", action: "list", providers });
 		return;
 	}
 
@@ -225,7 +225,7 @@ async function runProvider(
 ): Promise<void> {
 	const recipe = BUILTIN_RECIPES[provider];
 	if (!recipe) {
-		emitError(
+		await emitError(
 			`Unknown provider "${provider}". Run \`sd setup --list\` to see available providers.`,
 			jsonMode,
 		);
@@ -256,7 +256,7 @@ async function runProvider(
 	}
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: result.success,
 			command: "setup",
 			provider,
@@ -297,7 +297,7 @@ export function register(program: Command): void {
 				await findSeedsDir();
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : String(err);
-				emitError(msg, jsonMode);
+				await emitError(msg, jsonMode);
 				return;
 			}
 
@@ -307,7 +307,7 @@ export function register(program: Command): void {
 			}
 
 			if (!provider) {
-				emitError("Specify a provider or use --list.", jsonMode);
+				await emitError("Specify a provider or use --list.", jsonMode);
 				return;
 			}
 

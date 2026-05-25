@@ -108,7 +108,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	});
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "create", id: createdId });
+		await outputJson({ success: true, command: "create", id: createdId });
 	} else {
 		printSuccess(`Created ${createdId}`);
 	}

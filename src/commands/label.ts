@@ -27,7 +27,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		const labels = Object.keys(counts).sort();
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "label list-all", labels, counts });
+			await outputJson({ success: true, command: "label list-all", labels, counts });
 		} else {
 			if (labels.length === 0) {
 				console.log("No labels found.");
@@ -51,7 +51,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		const labels = issue.labels ?? [];
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "label list", issueId, labels });
+			await outputJson({ success: true, command: "label list", issueId, labels });
 		} else {
 			if (labels.length === 0) {
 				console.log(`${accent.bold(issueId)} has no labels.`);
@@ -86,7 +86,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		});
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "label add", issueId, labels: newLabels });
+			await outputJson({ success: true, command: "label add", issueId, labels: newLabels });
 		} else {
 			printSuccess(
 				`Added label(s) ${newLabels.map((l) => accent(l)).join(", ")} to ${accent(issueId)}`,
@@ -118,7 +118,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		});
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "label remove", issueId, labels: [...removeSet] });
+			await outputJson({ success: true, command: "label remove", issueId, labels: [...removeSet] });
 		} else {
 			printSuccess(`Removed label(s) from ${accent(issueId)}`);
 		}

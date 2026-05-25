@@ -77,22 +77,16 @@ describe("sync — worktree guard", () => {
 		const wtDir = join(tmpDir, "wt");
 		git(["worktree", "add", wtDir, "-b", "wt-branch"], mainRepo);
 
-		const logs: string[] = [];
-		const origLog = console.log;
-		console.log = (...args: unknown[]) => {
-			logs.push(args.map(String).join(" "));
-		};
+		const result = Bun.spawnSync(
+			["bun", "run", join(import.meta.dir, "..", "index.ts"), "sync", "--json"],
+			{
+				cwd: wtDir,
+				stdout: "pipe",
+				stderr: "pipe",
+			},
+		);
 
-		const origCwd = process.cwd();
-		process.chdir(wtDir);
-		try {
-			await run(["--json"]);
-		} finally {
-			process.chdir(origCwd);
-			console.log = origLog;
-		}
-
-		const output = JSON.parse(logs.join(""));
+		const output = JSON.parse(new TextDecoder().decode(result.stdout));
 		expect(output.worktree).toBe(true);
 		expect(output.committed).toBe(false);
 		expect(output.success).toBe(true);

@@ -106,7 +106,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	);
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "close", closed });
+		await outputJson({ success: true, command: "close", closed });
 	} else {
 		for (const id of closed) {
 			printSuccess(`Closed ${id}${reason ? ` — ${reason}` : ""}`);

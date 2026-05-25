@@ -25,7 +25,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		const closedBlockerIds = new Set(issues.filter((i) => i.status === "closed").map((i) => i.id));
 
 		if (jsonMode) {
-			outputJson({ success: true, command: "dep list", issueId, blockedBy, blocks });
+			await outputJson({ success: true, command: "dep list", issueId, blockedBy, blocks });
 		} else {
 			console.log(`${accent.bold(issueId)} ${muted("dependencies:")}`);
 			if (blockedBy.length > 0) {
@@ -97,7 +97,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		});
 
 		if (jsonMode) {
-			outputJson({ success: true, command: `dep ${subcmd}`, issueId, dependsOnId });
+			await outputJson({ success: true, command: `dep ${subcmd}`, issueId, dependsOnId });
 		} else {
 			const verb = subcmd === "add" ? "Added" : "Removed";
 			console.log(`${verb} dependency: ${accent(issueId)} ${muted("→")} ${accent(dependsOnId)}`);

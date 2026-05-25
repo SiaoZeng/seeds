@@ -18,7 +18,7 @@ export async function run(args: string[]): Promise<void> {
 
 	if (existsSync(join(seedsDir, CONFIG_FILE))) {
 		if (jsonMode) {
-			outputJson({ success: true, command: "init", dir: seedsDir });
+			await outputJson({ success: true, command: "init", dir: seedsDir });
 		} else {
 			printSuccess(`Already initialized: ${seedsDir}`);
 		}
@@ -56,7 +56,7 @@ export async function run(args: string[]): Promise<void> {
 	}
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "init", dir: seedsDir });
+		await outputJson({ success: true, command: "init", dir: seedsDir });
 	} else {
 		printSuccess(`Initialized .seeds/ in ${cwd}`);
 	}

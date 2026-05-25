@@ -85,7 +85,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	});
 
 	if (jsonMode) {
-		outputJson({ success: true, command: "unblock", issueId, removed });
+		await outputJson({ success: true, command: "unblock", issueId, removed });
 	} else {
 		if (removed.length === 0) {
 			console.log(`${muted("No closed blockers to remove from")} ${accent(issueId)}.`);

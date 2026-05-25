@@ -212,7 +212,7 @@ async function runTemplates(jsonMode: boolean): Promise<void> {
 		description: templates[name]?.description ?? "",
 	}));
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan templates",
 			templates: entries,
@@ -325,7 +325,7 @@ async function runPrompt(
 	}
 
 	if (jsonMode) {
-		outputJson({ plan_request: planRequest });
+		await outputJson({ plan_request: planRequest });
 		return;
 	}
 
@@ -769,7 +769,7 @@ async function runSubmit(seedId: string, planFile: string, opts: SubmitOptions):
 	}
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan submit",
 			plan_id: createdPlanId,
@@ -1429,7 +1429,7 @@ export async function runShow(idArg: string, jsonMode: boolean): Promise<void> {
 	const template = templates[plan.template];
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan show",
 			plan,
@@ -1511,7 +1511,7 @@ async function runList(filters: ListFilters, jsonMode: boolean): Promise<void> {
 		.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan list",
 			plans: filtered,
@@ -1592,7 +1592,7 @@ async function runOutcome(
 	}
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan outcome",
 			plan_id: finalPlan.id,
@@ -1773,7 +1773,7 @@ async function runAdopt(planIdArg: string, seedIds: string[], opts: AdoptOptions
 	const plan: Plan = finalPlan;
 
 	if (opts.jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan adopt",
 			plan_id: plan.id,
@@ -1925,7 +1925,7 @@ async function runRelease(
 	const plan: Plan = finalPlan;
 
 	if (opts.jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan release",
 			plan_id: plan.id,
@@ -1995,7 +1995,7 @@ async function runReview(idArg: string, by: string, jsonMode: boolean): Promise<
 	const finalPlan: Plan = updatedPlan;
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "plan review",
 			plan_id: finalPlan.id,
@@ -2031,7 +2031,7 @@ async function runValidate(idArg: string, jsonMode: boolean): Promise<void> {
 
 	if (result.valid) {
 		if (jsonMode) {
-			outputJson({ success: true, command: "plan validate", valid: true, plan_id: planId });
+			await outputJson({ success: true, command: "plan validate", valid: true, plan_id: planId });
 		} else {
 			printSuccess(`plan ${accent(planId)} valid`);
 		}

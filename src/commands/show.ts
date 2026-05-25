@@ -45,7 +45,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const jsonMode = fmt.mode === "json";
 	if (fmt.error) {
 		if (jsonMode) {
-			outputJson({ success: false, command: "show", error: fmt.error });
+			await outputJson({ success: false, command: "show", error: fmt.error });
 		} else {
 			console.error(fmt.error);
 		}
@@ -107,7 +107,7 @@ async function renderSingle(
 				};
 				out.plan_children = planChildren;
 			}
-			outputJson(out);
+			await outputJson(out);
 			return;
 		}
 		case "ids":
@@ -186,7 +186,7 @@ async function renderMultiple(
 			if (errors.length > 0) {
 				out.errors = errors.map((e) => ({ id: e.id, error: e.error }));
 			}
-			outputJson(out);
+			await outputJson(out);
 			if (anyMissing) process.exitCode = 1;
 			return;
 		}

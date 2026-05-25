@@ -50,7 +50,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const jsonMode = fmt.mode === "json";
 	if (fmt.error) {
 		if (jsonMode) {
-			outputJson({ success: false, command: "list", error: fmt.error });
+			await outputJson({ success: false, command: "list", error: fmt.error });
 		} else {
 			console.error(fmt.error);
 		}
@@ -83,7 +83,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	if (!isSortMode(sortFlag)) {
 		const msg = `Invalid --sort value: ${sortFlag}. Valid: ${VALID_SORT_MODES.join("|")}`;
 		if (jsonMode) {
-			outputJson({ success: false, command: "list", error: msg });
+			await outputJson({ success: false, command: "list", error: msg });
 		} else {
 			console.error(msg);
 		}
@@ -97,7 +97,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	switch (fmt.mode) {
 		case "json": {
 			const issuesWithPlan = issues.map((i) => issueJsonWithPlan(i, planForIssue(planCtx, i)));
-			outputJson({
+			await outputJson({
 				success: true,
 				command: "list",
 				issues: issuesWithPlan,

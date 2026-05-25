@@ -72,7 +72,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 	const jsonMode = fmt.mode === "json";
 	if (fmt.error) {
 		if (jsonMode) {
-			outputJson({ success: false, command: "stats", error: fmt.error });
+			await outputJson({ success: false, command: "stats", error: fmt.error });
 		} else {
 			console.error(fmt.error);
 		}
@@ -114,7 +114,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 
 	switch (fmt.mode) {
 		case "json":
-			outputJson({ success: true, command: "stats", stats: data });
+			await outputJson({ success: true, command: "stats", stats: data });
 			return;
 		case "ids":
 			// Stats has no IDs to emit.

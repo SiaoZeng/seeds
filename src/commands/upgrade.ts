@@ -26,7 +26,7 @@ export async function run(args: string[]): Promise<void> {
 
 	if (checkOnly) {
 		if (jsonMode) {
-			outputJson({ success: true, command: "upgrade", current, latest, upToDate });
+			await outputJson({ success: true, command: "upgrade", current, latest, upToDate });
 		} else {
 			if (upToDate) {
 				console.log(`${chalk.green("✔")} Already up to date (${current})`);
@@ -40,7 +40,7 @@ export async function run(args: string[]): Promise<void> {
 
 	if (upToDate) {
 		if (jsonMode) {
-			outputJson({
+			await outputJson({
 				success: true,
 				command: "upgrade",
 				current,
@@ -68,7 +68,7 @@ export async function run(args: string[]): Promise<void> {
 	}
 
 	if (jsonMode) {
-		outputJson({
+		await outputJson({
 			success: true,
 			command: "upgrade",
 			current,

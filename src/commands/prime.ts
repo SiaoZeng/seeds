@@ -312,7 +312,7 @@ export async function run(args: string[]): Promise<void> {
 		const sections = compact ? COMPACT_SECTIONS : FULL_SECTIONS;
 		const content = renderPrimeSections(sections);
 		if (jsonMode) {
-			outputJson({ success: true, command: "prime", sections, content });
+			await outputJson({ success: true, command: "prime", sections, content });
 		} else {
 			process.stdout.write(content);
 		}
@@ -334,7 +334,7 @@ export async function run(args: string[]): Promise<void> {
 	if (customContent !== null) {
 		// Custom PRIME.md is opaque — we can't structurally parse it, so omit sections.
 		if (jsonMode) {
-			outputJson({
+			await outputJson({
 				success: true,
 				command: "prime",
 				sections: null,
@@ -349,7 +349,7 @@ export async function run(args: string[]): Promise<void> {
 	const sections = compact ? COMPACT_SECTIONS : FULL_SECTIONS;
 	const content = renderPrimeSections(sections);
 	if (jsonMode) {
-		outputJson({ success: true, command: "prime", sections, content });
+		await outputJson({ success: true, command: "prime", sections, content });
 	} else {
 		process.stdout.write(content);
 	}

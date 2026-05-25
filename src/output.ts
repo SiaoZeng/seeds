@@ -14,8 +14,8 @@ export function setQuiet(v: boolean): void {
 	_quiet = v;
 }
 
-export function outputJson(data: unknown): void {
-	console.log(JSON.stringify(data, null, 2));
+export async function outputJson(data: unknown): Promise<void> {
+	await Bun.write(Bun.stdout, `${JSON.stringify(data, null, 2)}\n`);
 }
 
 export function printSuccess(msg: string): void {
