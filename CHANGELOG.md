@@ -7,16 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-### Changed
-- **Test suite runs ~5.5× faster** (~99s → ~18s for 882 tests). Command tests now invoke the exported `run`/`register` entry points in-process via `src/test-harness.ts` instead of spawning `bun run src/index.ts` per assertion. The harness captures `console.log`/`console.error`/`process.stdout.write`/`Bun.write(Bun.stdout)`, snapshots/restores `process.exitCode` and `process.cwd()`, forces `chalk.level = 0` to match subprocess ANSI behavior, and propagates commander `exitOverride()` to subcommands so nested `--help` doesn't kill the test runner. Remaining subprocess spawns are explicitly justified: `src/cli-smoke.test.ts` covers the real binary boot path (registerAll, --help, --version, unknown-command suggester, main().catch JSON wrapper); `src/commands/completions.test.ts`, `src/suggestions.test.ts`, and `src/timing.test.ts` exercise root-level commander surfaces that require the full command tree; `src/commands/plan-submit-record-decision.test.ts` keeps a fake `ml` binary on PATH; `src/commands/sync.test.ts` keeps real `git` operations. (seeds-a3bd, pl-86aa)
+## [0.5.0] - 2026-05-26
 
 ### Added
-- **Plan steps accept an optional `labels: string[]` field** that flows to the spawned (or adopted) child seed. Values are normalized the same way `sd label add` normalizes them (lowercased, trimmed, deduped) and — critically — are merged **additively** on adoption (submit-time `existing_seed`, overwrite-time match, and post-submit `sd plan adopt`) so labels users added by hand are never clobbered. `STEP_SCHEMA` rejects empty-after-trim strings. This lets warren patrol agents (nightwatch, bugwatch) declare provenance labels declaratively in the plan JSON instead of issuing post-hoc `sd label add` calls per child. The new field is documented in the `sd plan prompt` instructions, the `sd plan submit` help text example, `sd prime`'s Planning command group, README's submission example, PLAN_SPEC's section-kind reference, and CLAUDE.md's Planning notes. (seeds-576c / pl-e5a8)
-- `sd plan edit <id>` performs targeted, field-level edits to an existing plan without going through the full `sd plan submit --overwrite` ceremony. `<id>` accepts a plan id (`pl-*`) or the parent seed id (same resolver as `sd plan show`). Every invocation bumps `plan.revision` exactly once and refreshes `plan.updatedAt`. Lock order matches the rest of the planning surface: outer `plans.jsonl`, inner `issues.jsonl` (mx-f29e43). Structural changes — adding, removing, or reordering steps — are out of scope by design and still require `--overwrite`. (seeds-a2de / plan pl-dee8)
-  - `--name <text>` sets the plan's human-readable label (the same field `sd plan submit --name` writes). Empty string rejected. (seeds-9b12, pl-dee8 step 1)
-  - `--section <name> <text>` replaces a text section in `plan.sections`. V1 covers text sections only; the name must resolve in the active template's section spec. `--section approach` is special-cased — after the write, the `seeds:plan-backref` block on every entry in `plan.children` is refreshed (`applyPlanBackref`) so each child seed's snippet stays in sync with the live approach. Other sections do not touch children. (seeds-21f2, pl-dee8 step 2)
-  - `--step <i> [--title <text>] [--priority <p>] [--type <type>]` edits step metadata in `plan.sections.steps[i-1]` AND propagates the change to the child seed at `plan.children[i-1]`. `--step` is 1-based (matching `step.blocks` and `sd plan adopt --step <i>`); at least one of `--title` / `--priority` / `--type` must be supplied. Priority accepts `0-4` or `P0-P4`; type is validated against `VALID_TYPES`. Out-of-range `--step` exits non-zero with both JSONL files untouched. Multiple step flags combine in one invocation; `--name` and `--section` still compose atomically with `--step` so combined edits stay atomic under the shared issues lock. (seeds-64cf, pl-dee8 step 3)
-- Docs updated: README "Editing a plan in place" section, PLAN_SPEC.md "In-Place Editing" section, CLAUDE.md plan command reference + planning notes, `sd prime` Planning command group, and `sd onboard` planning bullets (snippet schema bumped to 6). (seeds-d457, pl-dee8 step 4)
+- **`sd plan edit <id>`** — targeted, field-level edits to an existing plan without re-submitting the whole plan JSON via `--overwrite`. Accepts a plan id (`pl-*`) or the parent seed id. Every invocation bumps `plan.revision` once and refreshes `plan.updatedAt`. Structural changes (add/remove/reorder steps) still require `--overwrite`. (seeds-a2de / plan pl-dee8)
+  - `--name <text>` sets the plan's human-readable label. (seeds-9b12)
+  - `--section <name> <text>` replaces a text section; `--section approach` refreshes the `seeds:plan-backref` block on every child seed. (seeds-21f2)
+  - `--step <i> [--title] [--priority] [--type]` edits step metadata and propagates to the corresponding child seed. 1-based indexing, matching `step.blocks`. (seeds-64cf)
+- **Plan step labels** — steps accept an optional `labels: string[]` field that flows to the spawned (or adopted) child seed. Values are normalized (lowercased, trimmed, deduped) and merged **additively** on adoption so labels users added by hand are never clobbered. Lets warren patrol agents (nightwatch, bugwatch) declare provenance labels declaratively in the plan JSON. (seeds-576c / pl-e5a8)
+- Docs updated: README "Editing a plan in place" section, PLAN_SPEC.md "In-Place Editing" section, CLAUDE.md plan command reference + planning notes, `sd prime` Planning command group, `sd onboard` planning bullets (snippet schema bumped to 6). (seeds-d457)
+
+### Changed
+- **Test suite runs ~5.5x faster** (~99s → ~18s for 882 tests). Command tests now invoke exported `run`/`register` entry points in-process via `src/test-harness.ts` instead of spawning `bun run src/index.ts` per assertion. Subprocess spawns remain only where justified: `cli-smoke.test.ts` (real binary boot path), `completions.test.ts` / `suggestions.test.ts` / `timing.test.ts` (root-level commander surfaces), `plan-submit-record-decision.test.ts` (fake `ml` on PATH), `sync.test.ts` (real git). (seeds-a3bd, pl-86aa)
 
 ## [0.4.7] - 2026-05-18
 
@@ -241,7 +243,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.4.5...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/jayminwest/seeds/compare/v0.4.7...v0.5.0
+[0.4.7]: https://github.com/jayminwest/seeds/compare/v0.4.6...v0.4.7
+[0.4.6]: https://github.com/jayminwest/seeds/compare/v0.4.5...v0.4.6
 [0.4.5]: https://github.com/jayminwest/seeds/compare/v0.4.4...v0.4.5
 [0.4.4]: https://github.com/jayminwest/seeds/compare/v0.4.3...v0.4.4
 [0.4.3]: https://github.com/jayminwest/seeds/compare/v0.4.2...v0.4.3

@@ -76,6 +76,9 @@ seeds/
       completions.ts          # sd completions
       config.ts               # sd config schema/show/set/unset
       setup.ts                # sd setup pi (and future recipes)
+    test-harness.ts           # In-process test harness (captures stdout/stderr/exitCode)
+    test-harness.test.ts      # Test harness self-tests
+    cli-smoke.test.ts         # CLI binary smoke tests (real subprocess)
     markers.test.ts           # Marker section tests
     store.test.ts             # Core data layer tests
     id.test.ts                # ID generation tests
@@ -419,10 +422,10 @@ context, run `ml search --archived <query>`.
 
 <!-- seeds:start -->
 ## Issue Tracking (Seeds)
-<!-- seeds-onboard:v0.4.7 -->
+<!-- seeds-onboard:v0.5.0 -->
 <!-- seeds-onboard-schema:6 -->
 
-This project uses [Seeds](https://github.com/jayminwest/seeds) v0.4.7 for git-native issue tracking.
+This project uses [Seeds](https://github.com/jayminwest/seeds) v0.5.0 for git-native issue tracking.
 
 **At the start of every session**, run:
 ```
