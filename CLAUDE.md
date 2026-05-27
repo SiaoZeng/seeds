@@ -34,11 +34,6 @@ seeds/
       publish.yml             # CI publish: auto-tag + GitHub release + npm publish
   scripts/
     version-bump.ts           # Bump version in package.json + src/version.ts
-  extensions/
-    pi/                       # @os-eco/pi-seeds extension (pi-coding-agent runtime)
-      index.ts                # entry: lifecycle hooks + tools + slash commands
-      lib/                    # autocomplete, commands, config, prime, status, tools
-      README.md
   src/
     index.ts                  # CLI entry + command router
     version.ts                # VERSION constant (importable without CLI side-effects)
@@ -75,7 +70,6 @@ seeds/
       upgrade.ts              # sd upgrade
       completions.ts          # sd completions
       config.ts               # sd config schema/show/set/unset
-      setup.ts                # sd setup pi (and future recipes)
     test-harness.ts           # In-process test harness (captures stdout/stderr/exitCode)
     test-harness.test.ts      # Test harness self-tests
     cli-smoke.test.ts         # CLI binary smoke tests (real subprocess)
@@ -96,7 +90,6 @@ seeds/
       unblock.test.ts
       sync.test.ts
       config.test.ts
-      setup.test.ts
     suggestions.test.ts       # Typo suggestion tests
     timing.test.ts            # --timing flag tests
 ```

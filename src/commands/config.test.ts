@@ -42,7 +42,7 @@ describe("sd config schema", () => {
 		expect(schema.additionalProperties).toBe(false);
 		const props = schema.properties as Record<string, unknown>;
 		expect(Object.keys(props).sort()).toEqual(
-			["max_plan_depth", "pi", "plan_templates", "project", "version"].sort(),
+			["max_plan_depth", "plan_templates", "project", "version"].sort(),
 		);
 		const defs = schema.$defs as Record<string, unknown>;
 		expect(Object.keys(defs).sort()).toEqual(["PlanTemplate", "SectionSpec"].sort());
@@ -72,73 +72,6 @@ describe("sd config schema", () => {
 			["item", "kind", "min", "min_length", "mulch_source", "prompt", "required"].sort(),
 		);
 		expect(sectionSpec.required).toEqual(["required", "kind", "prompt"]);
-	});
-
-	test("golden: pi block has expected properties (warren wire format)", () => {
-		const schema = configSchema();
-		const props = schema.properties as Record<string, Record<string, unknown>>;
-		const pi = props.pi;
-		expect(pi).toBeDefined();
-		const piProps = pi?.properties as Record<string, unknown>;
-		expect(Object.keys(piProps).sort()).toEqual(
-			["auto_prime", "cache", "commands", "prime", "reference_expansion", "status_widget"].sort(),
-		);
-		expect(pi?.additionalProperties).toBe(false);
-
-		const primeProps = (piProps.prime as Record<string, unknown>).properties as Record<
-			string,
-			unknown
-		>;
-		expect(Object.keys(primeProps)).toEqual(["sections"]);
-
-		const cacheProps = (piProps.cache as Record<string, unknown>).properties as Record<
-			string,
-			unknown
-		>;
-		expect(Object.keys(cacheProps)).toEqual(["invalidate_on_write"]);
-
-		const refExpProps = (piProps.reference_expansion as Record<string, unknown>)
-			.properties as Record<string, unknown>;
-		expect(Object.keys(refExpProps)).toEqual(["max_refs"]);
-	});
-
-	test("pi block: a valid pi config passes AJV", () => {
-		const { $schema: _meta, ...schema } = configSchema();
-		const validate = compileSchema(schema);
-		const result = validate({
-			project: "demo",
-			version: "1",
-			pi: {
-				auto_prime: true,
-				status_widget: false,
-				prime: { sections: ["rules", "closeProtocol"] },
-				cache: { invalidate_on_write: true },
-				reference_expansion: { max_refs: 10 },
-			},
-		});
-		expect(result).toEqual({ valid: true });
-	});
-
-	test("pi block: unknown nested key is rejected (additionalProperties: false)", () => {
-		const { $schema: _meta, ...schema } = configSchema();
-		const validate = compileSchema(schema);
-		const result = validate({
-			project: "demo",
-			version: "1",
-			pi: { bogus: true },
-		});
-		expect(result.valid).toBe(false);
-	});
-
-	test("pi block: invalid section name is rejected", () => {
-		const { $schema: _meta, ...schema } = configSchema();
-		const validate = compileSchema(schema);
-		const result = validate({
-			project: "demo",
-			version: "1",
-			pi: { prime: { sections: ["not_a_section"] } },
-		});
-		expect(result.valid).toBe(false);
 	});
 
 	test("compiles via AJV (after stripping $schema URI)", () => {

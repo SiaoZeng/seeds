@@ -63,7 +63,6 @@ const loaders: Record<string, () => Promise<CommandModule>> = {
 	block: () => import("./commands/block.ts"),
 	unblock: () => import("./commands/unblock.ts"),
 	config: () => import("./commands/config.ts"),
-	setup: () => import("./commands/setup.ts"),
 	plan: () => import("./commands/plan.ts"),
 };
 
