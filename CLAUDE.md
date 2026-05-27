@@ -415,10 +415,10 @@ context, run `ml search --archived <query>`.
 
 <!-- seeds:start -->
 ## Issue Tracking (Seeds)
-<!-- seeds-onboard:v0.5.0 -->
-<!-- seeds-onboard-schema:6 -->
+<!-- seeds-onboard:v0.5.1 -->
+<!-- seeds-onboard-schema:7 -->
 
-This project uses [Seeds](https://github.com/jayminwest/seeds) v0.5.0 for git-native issue tracking.
+This project uses [Seeds](https://github.com/jayminwest/seeds) v0.5.1 for git-native issue tracking.
 
 **At the start of every session**, run:
 ```

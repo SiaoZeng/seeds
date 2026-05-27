@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.1] - 2026-05-26
+
+### Removed
+- **`@os-eco/pi-seeds` extension reverted** — the entire `extensions/pi/` directory, `sd setup pi` command, pi-aware `sd onboard` variant, and `pi` config schema section have been removed. Optional peer dependencies on `@earendil-works/pi-coding-agent` and `typebox` dropped. `package.json` no longer declares `pi.extensions` or ships the `extensions/` directory. The experiment shipped in v0.5.0 and was reverted before any downstream adoption. (seeds-2f21)
+
+### Changed
+- `sd onboard` snippet simplified — pi-variant detection removed; onboard schema bumped from 6 to 7. Existing snippets will auto-upgrade on next `sd onboard` run.
+- `tsconfig.json` no longer includes `extensions/**/*` or sets `skipLibCheck`.
+
 ## [0.5.0] - 2026-05-26
 
 ### Added
@@ -243,7 +252,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero runtime dependencies — Bun built-ins only
 - `merge=union` gitattribute for git-native parallel branch merges
 
-[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/jayminwest/seeds/compare/v0.5.1...HEAD
+[0.5.1]: https://github.com/jayminwest/seeds/compare/v0.5.0...v0.5.1
 [0.5.0]: https://github.com/jayminwest/seeds/compare/v0.4.7...v0.5.0
 [0.4.7]: https://github.com/jayminwest/seeds/compare/v0.4.6...v0.4.7
 [0.4.6]: https://github.com/jayminwest/seeds/compare/v0.4.5...v0.4.6
