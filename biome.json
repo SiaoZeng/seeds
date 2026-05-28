@@ -78,7 +78,9 @@
 				"src/commands/tpl.ts",
 				"src/commands/unblock.ts",
 				"src/commands/update.ts",
-				"src/commands/upgrade.ts"
+				"src/commands/upgrade.ts",
+				"scripts/check-file-sizes.ts",
+				"scripts/check-debt-markers.ts"
 			],
 			"linter": {
 				"rules": {

@@ -30,6 +30,8 @@
 		"lint": "biome check --error-on-warnings .",
 		"lint:fix": "biome check --write --error-on-warnings .",
 		"typecheck": "tsc --noEmit",
+		"check:size": "bun run scripts/check-file-sizes.ts --budget scripts/file-size-budgets.json",
+		"check:debt": "bun run scripts/check-debt-markers.ts --budget scripts/debt-markers-budget.json",
 		"version:bump": "bun run scripts/version-bump.ts"
 	},
 	"devDependencies": {
