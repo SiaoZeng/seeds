@@ -1,7 +1,7 @@
 {
 	"$schema": "https://biomejs.dev/schemas/2.4.6/schema.json",
 	"files": {
-		"includes": ["src/**", "scripts/**", "!**/node_modules"]
+		"includes": ["src/**", "scripts/**", "extensions/**", "!**/node_modules"]
 	},
 	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"linter": {
@@ -23,10 +23,26 @@
 				"useImportType": "error",
 				"useExportType": "error",
 				"useNodejsImportProtocol": "error",
-				"useTemplate": "error"
+				"useTemplate": "error",
+				"useFilenamingConvention": {
+					"level": "error",
+					"options": {
+						"strictCase": true,
+						"requireAscii": true,
+						"filenameCases": ["kebab-case"]
+					}
+				}
 			},
 			"complexity": {
-				"noUselessTypeConstraint": "error"
+				"noUselessTypeConstraint": "error",
+				"noExcessiveLinesPerFunction": {
+					"level": "error",
+					"options": { "maxLines": 500 }
+				},
+				"noExcessiveCognitiveComplexity": {
+					"level": "error",
+					"options": { "maxAllowedComplexity": 15 }
+				}
 			}
 		}
 	},
@@ -34,5 +50,43 @@
 		"enabled": true,
 		"indentStyle": "tab",
 		"lineWidth": 100
-	}
+	},
+	"overrides": [
+		{
+			"includes": [
+				"src/index.ts",
+				"src/plan-domain.ts",
+				"src/plan-mulch.ts",
+				"src/plan-schema.ts",
+				"src/test-harness.ts",
+				"src/validation.ts",
+				"src/yaml.ts",
+				"src/commands/blocked.ts",
+				"src/commands/close.ts",
+				"src/commands/create.ts",
+				"src/commands/dep.ts",
+				"src/commands/doctor.ts",
+				"src/commands/label.ts",
+				"src/commands/list.ts",
+				"src/commands/migrate.ts",
+				"src/commands/onboard.ts",
+				"src/commands/plan.ts",
+				"src/commands/ready.ts",
+				"src/commands/search.ts",
+				"src/commands/show.ts",
+				"src/commands/sync.ts",
+				"src/commands/tpl.ts",
+				"src/commands/unblock.ts",
+				"src/commands/update.ts",
+				"src/commands/upgrade.ts"
+			],
+			"linter": {
+				"rules": {
+					"complexity": {
+						"noExcessiveCognitiveComplexity": "off"
+					}
+				}
+			}
+		}
+	]
 }
