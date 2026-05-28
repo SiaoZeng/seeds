@@ -448,18 +448,6 @@ Seeds is safe for concurrent multi-agent use:
 - **Atomic writes** — temp file + rename under lock
 - **Dedup on read** — last occurrence wins after `merge=union` git merges
 
-## Integration with Overstory
-
-Overstory wraps `sd` via `Bun.spawn(["sd", ...])` with `--json` parsing, identical to how it wraps `bd`:
-
-| BeadsClient method | sd command |
-|--------------------|------------|
-| `ready()` | `sd ready --json` |
-| `show(id)` | `sd show <id> --json` |
-| `create(title, opts)` | `sd create --title "..." --json` |
-| `claim(id)` | `sd update <id> --status=in_progress --json` |
-| `close(id, reason)` | `sd close <id> --reason "..." --json` |
-
 ## Part of os-eco
 
 Seeds is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent tooling ecosystem.
