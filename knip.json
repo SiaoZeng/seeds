@@ -8,6 +8,7 @@
 		".seeds/**"
 	],
 	"ignoreUnresolved": ["bun-types"],
+	"ignoreDependencies": ["pino-pretty"],
 	"workspaces": {
 		".": {
 			"entry": [
