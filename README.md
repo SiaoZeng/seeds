@@ -6,7 +6,7 @@ Git-native issue tracker for AI agent workflows.
 [![CI](https://github.com/jayminwest/seeds/actions/workflows/ci.yml/badge.svg)](https://github.com/jayminwest/seeds/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
 
-Replaces [beads](https://github.com/steveyegge/beads) in the [overstory](https://github.com/jayminwest/overstory)/[mulch](https://github.com/jayminwest/mulch) ecosystem. No Dolt, no daemon, no binary DB files. **The JSONL file IS the database.**
+Replaces [beads](https://github.com/steveyegge/beads) in the [mulch](https://github.com/jayminwest/mulch) ecosystem. No Dolt, no daemon, no binary DB files. **The JSONL file IS the database.**
 
 ## Install
 
@@ -320,7 +320,7 @@ Full spec: see [PLAN_SPEC.md](./PLAN_SPEC.md).
 
 ## Extensions
 
-Issues carry an optional `extensions?: Record<string, unknown>` field for **runtime metadata** owned by downstream consumers — warren's scheduling state, greenhouse's dispatch pointers, overstory's run trail. Seeds itself treats the value as opaque JSON: no schema, no validation, round-trips byte-for-byte through `.seeds/issues.jsonl`.
+Issues carry an optional `extensions?: Record<string, unknown>` field for **runtime metadata** owned by downstream consumers — e.g. warren's scheduling state and dispatch pointers. Seeds itself treats the value as opaque JSON: no schema, no validation, round-trips byte-for-byte through `.seeds/issues.jsonl`.
 
 ```bash
 # Set or merge extension keys (shallow merge, one level deep)
@@ -390,7 +390,7 @@ Seeds stores all data in JSONL files inside a `.seeds/` directory — one JSON o
 
 ## Why
 
-Beads works but carries baggage overstory doesn't need:
+Beads works but carries baggage this ecosystem doesn't need:
 
 | Problem | Beads | Seeds |
 |---------|-------|-------|
@@ -463,10 +463,6 @@ Overstory wraps `sd` via `Bun.spawn(["sd", ...])` with `--json` parsing, identic
 ## Part of os-eco
 
 Seeds is part of the [os-eco](https://github.com/jayminwest/os-eco) AI agent tooling ecosystem.
-
-<p align="center">
-  <img src="https://raw.githubusercontent.com/jayminwest/os-eco/main/branding/logo.png" alt="os-eco" width="444" />
-</p>
 
 ## Contributing
 
