@@ -7,10 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.5] - 2026-05-28
+
 ### Added
 - `sd plan create <seed-id>` creates a first-class adopt-only plan: zero spawned children and an empty steps blueprint, intended to be populated via `sd plan adopt`. Removes the placeholder-step dance (submit throwaway steps → release → close) the release-train use case previously required. Supports `--name` and `--template`. (seeds-3dd1)
 - `sd plan reorder <plan-id> <seed-id...>` sets the exact `plan.children` order in one call (ids must be a permutation of current children). warren's plan-run consumes `plan.children` order verbatim, so this pins a release seed last. (seeds-3dd1)
 - `sd plan adopt` gains `--at <i>` / `--before <seed>` / `--after <seed>` (mutually exclusive) to control the children insertion position; omitting all three appends as before. (seeds-3dd1)
+- `sd prime` documents the adopt-only plan commands (`sd plan create` / `adopt` / `reorder`) in the Planning command group. (seeds-3dd1)
+
+### Internal
+- **L5 agent-readiness uplift** — ported the os-eco L5 toolkit into seeds: ratchet scripts (`check:size`, `check:debt`, `check:coverage`) with seeds-specific budgets, quality reporters (`report:test-timing`, `report:quality`), and the AGENTS.md validator (`check:agents`), each with co-located tests. A `check:all` aggregator wires them together and `ci.yml` runs the full gate. (VAL-SEEDS-007/009/011/012/018/FINAL)
+- **Governance scaffolding** — added `.github/` baseline (`dependabot.yml`, issue/PR templates, `labels.yml`, `sync-labels.yml` workflow), drop-in tool configs (Biome, knip, jscpd, bunfig), `.devcontainer/`, `.env.example`, and a `.gitignore` baseline. (VAL-SEEDS-004/005/006/008/010/015/016/017/020/021/024, seeds-f749)
+- **Structured logging** — added `src/log.ts` (pino logger with redaction); the top-level error handler now routes failures through `log.debug` for observability, silent at the default level and surfaced under `SEEDS_DEBUG=1`. (VAL-SEEDS-016/017)
+- **Docs** — authored `AGENTS.md` and `RUNBOOK.md`, plus a `.factory/skills/seeds-issue-workflow` skill; a `prepare` script points `core.hooksPath` at a pre-commit hook. (VAL-SEEDS-013/014/019/023)
 
 ## [0.5.4] - 2026-05-28
 
