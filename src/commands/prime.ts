@@ -146,6 +146,20 @@ const FULL_SECTIONS: PrimeSectionsFull = {
 				},
 				{ command: "sd plan show <pl-id>", description: "Sections, children, nested sub-plans" },
 				{
+					command: "sd plan create <seed-id>",
+					description:
+						"Adopt-only plan (zero spawned children); populate via 'sd plan adopt' + 'sd plan reorder'",
+				},
+				{
+					command: "sd plan adopt <pl-id> <seed-id...> [--step|--at|--before|--after]",
+					description:
+						"Adopt existing seeds into a plan; --at/--before/--after control children position",
+				},
+				{
+					command: "sd plan reorder <pl-id> <seed-id...>",
+					description: "Set the exact plan.children order (permutation of current children)",
+				},
+				{
 					command:
 						"sd plan edit <id> [--name|--section <n> <t>|--step <i> --title/--priority/--type]",
 					description:

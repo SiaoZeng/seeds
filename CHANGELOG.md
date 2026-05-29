@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `sd plan create <seed-id>` creates a first-class adopt-only plan: zero spawned children and an empty steps blueprint, intended to be populated via `sd plan adopt`. Removes the placeholder-step dance (submit throwaway steps → release → close) the release-train use case previously required. Supports `--name` and `--template`. (seeds-3dd1)
+- `sd plan reorder <plan-id> <seed-id...>` sets the exact `plan.children` order in one call (ids must be a permutation of current children). warren's plan-run consumes `plan.children` order verbatim, so this pins a release seed last. (seeds-3dd1)
+- `sd plan adopt` gains `--at <i>` / `--before <seed>` / `--after <seed>` (mutually exclusive) to control the children insertion position; omitting all three appends as before. (seeds-3dd1)
+
 ## [0.5.4] - 2026-05-28
 
 Nightwatch patrol fixes (plan pl-ca00): a second batch of small correctness and consistency fixes from a nightwatch sweep.

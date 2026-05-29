@@ -1,10 +1,9 @@
 import { dirname } from "node:path";
 import { Command } from "commander";
-import { findSeedsDir, loadPlanTemplates, maxPlanDepth, readConfig } from "../config.ts";
+import { findSeedsDir, loadPlanTemplates, readConfig } from "../config.ts";
 import { generateId } from "../id.ts";
 import { accent, brand, muted, outputJson, printSuccess } from "../output.ts";
 import { applyPlanBackref, buildPlanBackref, stripPlanBackref } from "../plan-backref.ts";
-import { type ChildSummary, summarisePlanChildren } from "../plan-context.ts";
 import { inferDomain } from "../plan-domain.ts";
 import { enrichPriorArt, recordDecision } from "../plan-mulch.ts";
 import { compilePlanTemplate, defaultTemplateForType } from "../plan-schema.ts";
@@ -21,6 +20,7 @@ import {
 import type { Issue, Plan, PlanStatus, PlanTemplate, SectionSpec } from "../types.ts";
 import { VALID_TYPES } from "../types.ts";
 import { normalizeLabels } from "./label.ts";
+import { resolvePlanIdArg, runShow } from "./plan-show.ts";
 
 export function register(program: Command): void {
 	const plan = new Command("plan").description("Plan management");
@@ -188,21 +188,58 @@ Plan name resolution:
 		);
 
 	plan
+		.command("create <seed-id>")
+		.description(
+			"Create an adopt-only plan with zero spawned children (populate via 'sd plan adopt')",
+		)
+		.option("--name <text>", "Human-readable plan label (defaults to the seed title)")
+		.option("--template <name>", "Plan template name (defaults to the seed type's default)")
+		.option("--json", "Output as JSON")
+		.action(async (seedId: string, opts: { name?: string; template?: string; json?: boolean }) => {
+			await runCreate(seedId, {
+				name: opts.name,
+				template: opts.template,
+				jsonMode: Boolean(opts.json),
+			});
+		});
+
+	plan
 		.command("adopt <plan-id> <seed-ids...>")
 		.description("Adopt existing open seeds into a plan (link-only; bumps plan revision)")
 		.option(
 			"--step <i>",
 			"1-based step index within the plan blueprint; sets plan_step_index on adopted seeds",
 		)
+		.option(
+			"--at <i>",
+			"1-based position in plan.children to insert the adopted seeds (default: append)",
+		)
+		.option("--before <seed>", "Insert the adopted seeds before this existing child seed")
+		.option("--after <seed>", "Insert the adopted seeds after this existing child seed")
 		.option("--json", "Output as JSON")
 		.action(
-			async (planIdArg: string, seedIds: string[], opts: { step?: string; json?: boolean }) => {
+			async (
+				planIdArg: string,
+				seedIds: string[],
+				opts: { step?: string; at?: string; before?: string; after?: string; json?: boolean },
+			) => {
 				await runAdopt(planIdArg, seedIds, {
 					step: opts.step,
+					at: opts.at,
+					before: opts.before,
+					after: opts.after,
 					jsonMode: Boolean(opts.json),
 				});
 			},
 		);
+
+	plan
+		.command("reorder <plan-id> <seed-ids...>")
+		.description("Set the exact order of plan.children (must be a permutation of current children)")
+		.option("--json", "Output as JSON")
+		.action(async (planIdArg: string, seedIds: string[], opts: { json?: boolean }) => {
+			await runReorder(planIdArg, seedIds, { jsonMode: Boolean(opts.json) });
+		});
 
 	plan
 		.command("release <plan-id> <seed-ids...>")
@@ -1300,279 +1337,6 @@ function applyOverwrite(args: OverwriteArgs): OverwriteResult {
 	return { finalChildIds, revision: updatedPlan.revision, obsolete };
 }
 
-interface PlanTreeNode {
-	plan: Plan;
-	children: ChildSummary[];
-	children_plans: PlanTreeEntry[];
-}
-
-interface PlanTreeTruncation {
-	plan_id: string;
-	truncated: true;
-	hint: string;
-}
-
-type PlanTreeEntry = PlanTreeNode | PlanTreeTruncation;
-
-function buildPlansBySeed(plans: Plan[]): Map<string, Plan> {
-	const out = new Map<string, Plan>();
-	for (const p of plans) {
-		const existing = out.get(p.seed);
-		if (!existing || existing.updatedAt < p.updatedAt) out.set(p.seed, p);
-	}
-	return out;
-}
-
-function truncationHint(planId: string): string {
-	return `depth limit reached — use \`sd plan show ${planId}\` to drill in`;
-}
-
-// PLAN_SPEC.md:340, 425, 430 — recurse through nested plans up to max_plan_depth.
-// Depth is 1-indexed: the root plan is at depth 1, nested plans start at 2.
-function buildPlanTree(
-	plan: Plan,
-	issues: Issue[],
-	plansBySeed: Map<string, Plan>,
-	depth: number,
-	maxDepth: number,
-): PlanTreeNode {
-	const childrenSummary = summarisePlanChildren(plan, issues);
-	const childrenPlans: PlanTreeEntry[] = [];
-	for (const childId of plan.children) {
-		const sub = plansBySeed.get(childId);
-		if (!sub) continue;
-		const nextDepth = depth + 1;
-		if (nextDepth > maxDepth) {
-			childrenPlans.push({
-				plan_id: sub.id,
-				truncated: true,
-				hint: truncationHint(sub.id),
-			});
-		} else {
-			childrenPlans.push(buildPlanTree(sub, issues, plansBySeed, nextDepth, maxDepth));
-		}
-	}
-	return { plan, children: childrenSummary, children_plans: childrenPlans };
-}
-
-function renderPlanSections(plan: Plan, template: PlanTemplate | undefined): void {
-	console.log(brand("Sections:"));
-	const order = ["context", "approach", "alternatives", "steps", "risks", "acceptance"];
-	const knownKeys = new Set(order);
-	const orderedKeys = [
-		...order.filter((k) => k in plan.sections),
-		...Object.keys(plan.sections).filter((k) => !knownKeys.has(k)),
-	];
-	for (const key of orderedKeys) {
-		const value = plan.sections[key];
-		const spec = template?.sections[key];
-		console.log(`  ${accent.bold(key)}`);
-		if (value === undefined || value === null) {
-			console.log(muted("    (empty)"));
-			continue;
-		}
-		if (typeof value === "string") {
-			for (const line of value.split("\n")) console.log(`    ${line}`);
-			continue;
-		}
-		if (Array.isArray(value)) {
-			if (value.length === 0) {
-				console.log(muted("    (none)"));
-				continue;
-			}
-			renderListSection(value, spec);
-			continue;
-		}
-		console.log(`    ${JSON.stringify(value)}`);
-	}
-}
-
-function renderListSection(entries: unknown[], spec: SectionSpec | undefined): void {
-	const kind = spec?.kind;
-	const itemSpec = spec?.item;
-	entries.forEach((entry, i) => {
-		const marker = `    ${i + 1}.`;
-		if (typeof entry === "string") {
-			console.log(`${marker} ${entry}`);
-			return;
-		}
-		if (kind === "steps" && isPlainRecord(entry)) {
-			renderStepEntry(marker, entry);
-			return;
-		}
-		if (kind === "list" && isPlainRecord(entry) && isItemSchema(itemSpec)) {
-			renderListEntry(marker, entry, itemSpec);
-			return;
-		}
-		console.log(`${marker} ${JSON.stringify(entry)}`);
-	});
-}
-
-function renderStepEntry(marker: string, entry: Record<string, unknown>): void {
-	const title = typeof entry.title === "string" ? entry.title : JSON.stringify(entry);
-	console.log(`${marker} ${title}`);
-	const subIndent = " ".repeat(marker.length + 1);
-	const blocks = entry.blocks;
-	if (Array.isArray(blocks) && blocks.length > 0) {
-		// blocks values are stored 1-based (seeds-185f), so render verbatim.
-		const labels = blocks
-			.map((b) => (typeof b === "number" ? String(b) : JSON.stringify(b)))
-			.join(", ");
-		console.log(`${subIndent}${muted(`blocks: ${labels}`)}`);
-	}
-	if (entry.requires_plan === true) {
-		console.log(`${subIndent}${muted("requires_plan: true")}`);
-	}
-	if (typeof entry.plan_template === "string" && entry.plan_template.length > 0) {
-		console.log(`${subIndent}${muted(`plan_template: ${entry.plan_template}`)}`);
-	}
-}
-
-function renderListEntry(
-	marker: string,
-	entry: Record<string, unknown>,
-	itemSpec: Record<string, SectionSpec>,
-): void {
-	const subIndent = " ".repeat(marker.length + 1);
-	const fieldNames = Object.keys(itemSpec);
-	let firstLineWritten = false;
-	for (const field of fieldNames) {
-		const fv = entry[field];
-		if (fv === undefined || fv === null || fv === "") continue;
-		const rendered = typeof fv === "string" ? fv : JSON.stringify(fv);
-		if (!firstLineWritten) {
-			console.log(`${marker} ${field}: ${rendered}`);
-			firstLineWritten = true;
-		} else {
-			console.log(`${subIndent}${field}: ${rendered}`);
-		}
-	}
-	if (!firstLineWritten) {
-		console.log(`${marker} ${JSON.stringify(entry)}`);
-	}
-}
-
-function isPlainRecord(v: unknown): v is Record<string, unknown> {
-	return typeof v === "object" && v !== null && !Array.isArray(v);
-}
-
-function isItemSchema(item: SectionSpec["item"]): item is Record<string, SectionSpec> {
-	return typeof item === "object" && item !== null;
-}
-
-function renderNestedPlanHuman(entry: PlanTreeEntry, indent: string): void {
-	if ("truncated" in entry) {
-		console.log(`${indent}${muted(entry.hint)}`);
-		return;
-	}
-	const { plan, children, children_plans } = entry;
-	const nameLabel = plan.name ? `  ${plan.name}` : "";
-	console.log(
-		`${indent}${brand("Sub-plan:")} ${accent.bold(plan.id)}${nameLabel}  ${muted(`[${plan.status}]`)}  ${muted(`rev ${plan.revision}`)}  ${muted(`seed=${plan.seed}`)}`,
-	);
-	console.log(`${indent}${muted(`Children (${children.length}):`)}`);
-	const childIndent = `${indent}  `;
-	if (children.length === 0) {
-		console.log(`${childIndent}${muted("(none)")}`);
-	} else {
-		for (const c of children) {
-			const tag = c.adopted ? ` ${muted("(adopted)")}` : "";
-			console.log(`${childIndent}${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}${tag}`);
-		}
-	}
-	for (const sub of children_plans) {
-		console.log("");
-		renderNestedPlanHuman(sub, childIndent);
-	}
-}
-
-// Accept either a plan id (pl-xxxx) or a seed id; seeds resolve through
-// seed.plan_id (PLAN_SPEC contract: "the seed knows its plan"). The shared
-// helper keeps show/validate/outcome/review consistent so an agent that has a
-// seed id in hand never has to round-trip through `sd plan list` for the
-// pl-xxxx token.
-async function resolvePlanIdArg(arg: string, dir: string): Promise<string> {
-	if (arg.startsWith("pl-")) return arg;
-	const issues = await readIssues(dir);
-	const seed = issues.find((i) => i.id === arg);
-	if (!seed) {
-		throw new Error(`Plan not found: ${arg}. Run 'sd plan list' to see available plans.`);
-	}
-	if (!seed.plan_id) {
-		throw new Error(
-			`Seed ${arg} has no plan. Submit one with 'sd plan submit ${arg} --plan <file>'.`,
-		);
-	}
-	return seed.plan_id;
-}
-
-export async function runShow(idArg: string, jsonMode: boolean): Promise<void> {
-	const dir = await findSeedsDir();
-	const planId = await resolvePlanIdArg(idArg, dir);
-	const config = await readConfig(dir);
-	const maxDepth = maxPlanDepth(config);
-	const plans = await readPlans(dir);
-	const plan = plans.find((p) => p.id === planId);
-	if (!plan) {
-		throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
-	}
-	const issues = await readIssues(dir);
-	const plansBySeed = buildPlansBySeed(plans);
-	const tree = buildPlanTree(plan, issues, plansBySeed, 1, maxDepth);
-	const templates = await loadPlanTemplates(dir);
-	const template = templates[plan.template];
-
-	if (jsonMode) {
-		await outputJson({
-			success: true,
-			command: "plan show",
-			plan,
-			children: tree.children,
-			children_plans: tree.children_plans,
-		});
-		return;
-	}
-
-	console.log(`${accent.bold(plan.id)}  ${brand(plan.status)}  ${muted(`rev ${plan.revision}`)}`);
-	if (plan.name) console.log(`Name:     ${plan.name}`);
-	console.log(`Seed:     ${accent(plan.seed)}`);
-	console.log(`Template: ${plan.template}`);
-	console.log(`Created:  ${muted(plan.createdAt)}`);
-	console.log(`Updated:  ${muted(plan.updatedAt)}`);
-	if (plan.outcome) {
-		const note = plan.outcomeNote ? ` — ${plan.outcomeNote}` : "";
-		console.log(`Outcome:  ${plan.outcome}${note}`);
-	}
-	// PLAN_SPEC.md:404-413 — review hint is purely cosmetic and only relevant
-	// while a plan is awaiting work or in flight.
-	const reviewActionable = plan.status === "approved" || plan.status === "active";
-	if (!plan.reviewedBy && reviewActionable) {
-		console.log(muted("Review suggested (no reviewer recorded yet)"));
-	}
-	if (plan.reviewedBy) {
-		console.log(`Reviewed: ${plan.reviewedBy}`);
-	}
-
-	console.log("");
-	renderPlanSections(plan, template);
-
-	console.log("");
-	console.log(brand(`Children (${tree.children.length}):`));
-	if (tree.children.length === 0) {
-		console.log(muted("  (none)"));
-	} else {
-		for (const c of tree.children) {
-			const tag = c.adopted ? ` ${muted("(adopted)")}` : "";
-			console.log(`  ${accent(c.id)}  ${muted(`[${c.status}]`)}  ${c.title}${tag}`);
-		}
-	}
-
-	for (const sub of tree.children_plans) {
-		console.log("");
-		renderNestedPlanHuman(sub, "  ");
-	}
-}
-
 interface ListFilters {
 	seed?: string;
 	status?: string;
@@ -1700,9 +1464,183 @@ async function runOutcome(
 	printSuccess(`plan ${accent(finalPlan.id)} outcome recorded: ${finalPlan.outcome}${noteSuffix}`);
 }
 
+interface CreateOptions {
+	name?: string;
+	template?: string;
+	jsonMode: boolean;
+}
+
+// sd plan create <seed-id> (seeds-3dd1). First-class adopt-only plan: writes a
+// plan row with zero spawned children and an empty steps blueprint, intended to
+// be populated via `sd plan adopt`. This removes the placeholder-step dance
+// (submit 2 throwaway steps → release → close) the release-train use case
+// previously required. Link contract mirrors submit's fresh path: the parent
+// seed's plan_id is set so `sd plan show <seed>`/adopt resolve seed → plan.
+// No children means no blockedBy edges yet — those land as seeds are adopted.
+// Lock order matches submit/adopt: outer plans, inner issues (mx-f29e43).
+async function runCreate(seedId: string, opts: CreateOptions): Promise<void> {
+	const dir = await findSeedsDir();
+	const templates = await loadPlanTemplates(dir);
+	const explicitName = normalizePlanName(opts.name);
+
+	let createdPlanId = "";
+	let templateName = "";
+	let aborted = false;
+
+	await withLock(plansPath(dir), async () => {
+		await withLock(issuesPath(dir), async () => {
+			const allIssues = await readIssues(dir);
+			const allPlans = await readPlans(dir);
+
+			const seedIdx = allIssues.findIndex((i) => i.id === seedId);
+			const seed = allIssues[seedIdx];
+			if (!seed) throw new Error(`Seed not found: ${seedId}`);
+
+			templateName = opts.template ?? defaultTemplateForType(seed.type);
+			if (!templates[templateName]) {
+				const available = Object.keys(templates).join(", ");
+				throw new Error(`Unknown template: ${templateName}. Available: ${available}`);
+			}
+
+			const existingPlan = allPlans.find((p) => p.seed === seedId && p.status !== "draft");
+			if (existingPlan) {
+				process.stderr.write(
+					`✗ plan ${existingPlan.id} already exists for ${seedId} (status: ${existingPlan.status}, revision: ${existingPlan.revision})\n  Adopt seeds into it with 'sd plan adopt ${existingPlan.id} <seed-ids...>'.\n`,
+				);
+				process.exitCode = 1;
+				aborted = true;
+				return;
+			}
+
+			const planIds = new Set(allPlans.map((p) => p.id));
+			const planId = generateId("pl", planIds);
+			const now = new Date().toISOString();
+			const resolvedName = explicitName ?? normalizePlanName(seed.title);
+
+			const plan: Plan = {
+				id: planId,
+				seed: seedId,
+				template: templateName,
+				status: "approved",
+				revision: 1,
+				sections: { steps: [] },
+				children: [],
+				createdAt: now,
+				updatedAt: now,
+			};
+			if (resolvedName) plan.name = resolvedName;
+
+			allIssues[seedIdx] = { ...seed, plan_id: planId, updatedAt: now };
+			await writeIssues(dir, allIssues);
+
+			const draftIdx = allPlans.findIndex((p) => p.seed === seedId && p.status === "draft");
+			if (draftIdx >= 0) {
+				allPlans[draftIdx] = plan;
+				await writePlans(dir, allPlans);
+			} else {
+				await appendPlan(dir, plan);
+			}
+
+			createdPlanId = planId;
+		});
+	});
+
+	if (aborted) return;
+
+	if (opts.jsonMode) {
+		await outputJson({
+			success: true,
+			command: "plan create",
+			plan_id: createdPlanId,
+			parent_seed: seedId,
+			template: templateName,
+			children: [],
+		});
+		return;
+	}
+	printSuccess(`plan ${accent(createdPlanId)} created (status: approved, adopt-only)`);
+	process.stderr.write(
+		`\nNext:\n  sd plan adopt ${createdPlanId} <seed-ids...>   # populate children in order\n  sd plan reorder ${createdPlanId} <seed-ids...> # set the exact children order\n`,
+	);
+}
+
 interface AdoptOptions {
 	step?: string;
+	at?: string;
+	before?: string;
+	after?: string;
 	jsonMode: boolean;
+}
+
+// Positioning for `sd plan adopt`: at most one of --at/--before/--after may be
+// given. --at is a 1-based slot in the resulting children array; --before /
+// --after anchor on an existing child id. Returns a discriminated spec the
+// in-lock resolver translates into a 0-based insertion index once the live
+// children array is known. Default (none given) appends.
+type AdoptPosition =
+	| { kind: "append" }
+	| { kind: "at"; index: number }
+	| { kind: "before"; anchor: string }
+	| { kind: "after"; anchor: string };
+
+function parseAdoptPosition(opts: AdoptOptions): AdoptPosition {
+	const provided = [
+		opts.at !== undefined ? "--at" : null,
+		opts.before !== undefined ? "--before" : null,
+		opts.after !== undefined ? "--after" : null,
+	].filter((x): x is string => x !== null);
+	if (provided.length > 1) {
+		throw new Error(
+			`--at, --before, and --after are mutually exclusive (got: ${provided.join(", ")}).`,
+		);
+	}
+	if (opts.at !== undefined) {
+		const n = Number.parseInt(opts.at, 10);
+		if (!Number.isInteger(n) || String(n) !== opts.at.trim() || n < 1) {
+			throw new Error(`--at must be a positive integer (got: ${opts.at}).`);
+		}
+		return { kind: "at", index: n - 1 };
+	}
+	if (opts.before !== undefined) {
+		if (opts.before.trim().length === 0) throw new Error("--before requires a seed id.");
+		return { kind: "before", anchor: opts.before };
+	}
+	if (opts.after !== undefined) {
+		if (opts.after.trim().length === 0) throw new Error("--after requires a seed id.");
+		return { kind: "after", anchor: opts.after };
+	}
+	return { kind: "append" };
+}
+
+// Translate an AdoptPosition into a 0-based insertion index against the live
+// children array. Throws (aborting before writes) when --at is out of range or
+// a --before/--after anchor is not a current child.
+function resolveInsertIndex(position: AdoptPosition, children: string[], planId: string): number {
+	switch (position.kind) {
+		case "append":
+			return children.length;
+		case "at":
+			if (position.index > children.length) {
+				throw new Error(
+					`--at ${position.index + 1} is out of range (plan ${planId} has ${children.length} child${children.length === 1 ? "" : "ren"}; valid range 1..${children.length + 1}).`,
+				);
+			}
+			return position.index;
+		case "before": {
+			const idx = children.indexOf(position.anchor);
+			if (idx < 0) {
+				throw new Error(`--before ${position.anchor} is not a child of plan ${planId}.`);
+			}
+			return idx;
+		}
+		case "after": {
+			const idx = children.indexOf(position.anchor);
+			if (idx < 0) {
+				throw new Error(`--after ${position.anchor} is not a child of plan ${planId}.`);
+			}
+			return idx + 1;
+		}
+	}
 }
 
 // sd plan adopt <plan-id> <seed-ids...> [--step <i>] (seeds-2b93 / pl-43ff step 4).
@@ -1729,6 +1667,7 @@ async function runAdopt(planIdArg: string, seedIds: string[], opts: AdoptOptions
 	}
 
 	const stepIndex = parseStepFlag(opts.step);
+	const position = parseAdoptPosition(opts);
 
 	let finalPlan: Plan | null = null;
 	let adoptedIds: string[] = [];
@@ -1845,13 +1784,18 @@ async function runAdopt(planIdArg: string, seedIds: string[], opts: AdoptOptions
 				updatedAt: now,
 			};
 
-			// Plan row: append adopted ids to children (deduped — the
-			// already-attached check above already rejects re-adoption, so this
-			// is belt-and-suspenders), bump revision once per command call.
-			const nextChildren = [...plan.children];
-			for (const { seedId } of resolved) {
-				if (!nextChildren.includes(seedId)) nextChildren.push(seedId);
-			}
+			// Plan row: insert adopted ids into children at the resolved
+			// position (default append), preserving command-line order. The
+			// already-attached check above rejects re-adoption, so the candidate
+			// ids are guaranteed absent from plan.children. Bump revision once
+			// per command call.
+			const insertAt = resolveInsertIndex(position, plan.children, plan.id);
+			const insertedIds = resolved.map((r) => r.seedId);
+			const nextChildren = [
+				...plan.children.slice(0, insertAt),
+				...insertedIds,
+				...plan.children.slice(insertAt),
+			];
 			// seeds-a3ab: tag these ids on the plan so `sd plan show` renders
 			// them with "(adopted)". Always non-empty here because runAdopt
 			// requires at least one seed id.
@@ -2045,6 +1989,91 @@ async function runRelease(
 		printSuccess(`${accent(id)} released from plan ${accent(plan.id)}`);
 	}
 	printSuccess(`plan ${accent(plan.id)} revision bumped to ${plan.revision}`);
+}
+
+interface ReorderOptions {
+	jsonMode: boolean;
+}
+
+// sd plan reorder <plan-id> <seed-ids...> (seeds-3dd1). Set the exact order of
+// plan.children in one call. The provided ids must be a permutation of the
+// current children (same set, no missing, no extra, no dupes) — reorder is a
+// pure ordering operation, never an add/remove (use adopt/release for that).
+// warren's plan-run consumes plan.children order verbatim (seq = index + 1), so
+// this is the surface for pinning a release seed last. Link state on the seeds
+// (plan_id, plan_step_index, blockedBy edges) is untouched; only the plan row's
+// children array order changes. Bumps revision once per call. Lock: plans only
+// — no issue mutation.
+async function runReorder(
+	planIdArg: string,
+	seedIds: string[],
+	opts: ReorderOptions,
+): Promise<void> {
+	const dir = await findSeedsDir();
+	const planId = await resolvePlanIdArg(planIdArg, dir);
+
+	if (seedIds.length === 0) {
+		throw new Error("At least one seed id is required.");
+	}
+	const dupes = findDuplicates(seedIds);
+	if (dupes.length > 0) {
+		throw new Error(
+			`Duplicate seed id${dupes.length === 1 ? "" : "s"} in args: ${dupes.join(", ")}.`,
+		);
+	}
+
+	let finalPlan: Plan | null = null;
+
+	await withLock(plansPath(dir), async () => {
+		const allPlans = await readPlans(dir);
+		const planIdx = allPlans.findIndex((p) => p.id === planId);
+		const plan = allPlans[planIdx];
+		if (!plan) {
+			throw new Error(`Plan not found: ${planId}. Run 'sd plan list' to see available plans.`);
+		}
+
+		const current = new Set(plan.children);
+		const provided = new Set(seedIds);
+		const missing = plan.children.filter((id) => !provided.has(id));
+		const extra = seedIds.filter((id) => !current.has(id));
+		if (extra.length > 0) {
+			throw new Error(
+				`${extra.join(", ")} ${extra.length === 1 ? "is" : "are"} not ${extra.length === 1 ? "a child" : "children"} of plan ${planId}. Adopt first with 'sd plan adopt'.`,
+			);
+		}
+		if (missing.length > 0) {
+			throw new Error(
+				`reorder must list every child exactly once; missing: ${missing.join(", ")}. Use 'sd plan release' to drop a child.`,
+			);
+		}
+
+		const now = new Date().toISOString();
+		const updatedPlan: Plan = {
+			...plan,
+			children: [...seedIds],
+			revision: plan.revision + 1,
+			updatedAt: now,
+		};
+		allPlans[planIdx] = updatedPlan;
+		await writePlans(dir, allPlans);
+		finalPlan = updatedPlan;
+	});
+
+	if (!finalPlan) return;
+	const plan: Plan = finalPlan;
+
+	if (opts.jsonMode) {
+		await outputJson({
+			success: true,
+			command: "plan reorder",
+			plan_id: plan.id,
+			children: plan.children,
+			revision: plan.revision,
+		});
+		return;
+	}
+	printSuccess(`plan ${accent(plan.id)} children reordered (revision ${plan.revision})`);
+	printSuccess(`order: ${plan.children.map((id) => accent(id)).join(", ")}`);
 }
 
 // removeValue: inverse of appendUnique. Returns undefined when the resulting

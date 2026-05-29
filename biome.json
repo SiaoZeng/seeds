@@ -71,6 +71,7 @@
 				"src/commands/migrate.ts",
 				"src/commands/onboard.ts",
 				"src/commands/plan.ts",
+				"src/commands/plan-show.ts",
 				"src/commands/ready.ts",
 				"src/commands/search.ts",
 				"src/commands/show.ts",

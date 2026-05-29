@@ -95,7 +95,9 @@ Every command supports `--json` for structured output. `sd list`, `sd ready`, `s
 | `sd plan show <pl-id>` | Show a plan with sections, children, and status (recurses through nested sub-plans up to `max_plan_depth`) |
 | `sd plan validate <pl-id>` | Re-run validation against the current template definition |
 | `sd plan list` | List plans (`--seed`, `--status`, `--outcome`, `--template`) |
-| `sd plan adopt <plan-id> <seed-id...>` | Adopt one or more already-open seeds into an existing plan (`--step <i>` to anchor at a blueprint step index; link-only, bumps revision) |
+| `sd plan create <seed-id>` | Create an adopt-only plan with zero spawned children, to be populated via `sd plan adopt` (`--name`, `--template`) |
+| `sd plan adopt <plan-id> <seed-id...>` | Adopt one or more already-open seeds into an existing plan (`--step <i>` to anchor at a blueprint step index; `--at <i>`/`--before <seed>`/`--after <seed>` to control position; link-only, bumps revision) |
+| `sd plan reorder <plan-id> <seed-id...>` | Set the exact order of `plan.children` (must be a permutation of current children; bumps revision) |
 | `sd plan release <plan-id> <seed-id...>` | Detach one or more seeds from a plan without closing them (link-only; bumps revision) |
 | `sd plan edit <id>` | Edit plan fields in place (`--name`, `--section <name> <text>`, `--step <i>` with `--title`/`--priority`/`--type`); accepts plan id or seed id; bumps revision |
 | `sd plan outcome <pl-id> --result <success\|partial\|failure>` | Record a plan outcome (`--note`) |
@@ -281,6 +283,28 @@ $ sd show seeds-bb11   # still open, plan link gone, backref block stripped
 ```
 
 Adoption applies the `seeds:plan-backref` block to the adopted seed's description (manual notes wrapping the markers survive). Release strips only that marker block. `sd plan show` tags adopted children with a muted `(adopted)` suffix in human output; `--json` adds `adopted: true` to each child summary that's listed in `plan.adoptedChildren`.
+
+### Adopt-only plans (release trains)
+
+When you want to run a set of **already-existing** seeds serially — e.g. a "release train" that ends with a cut-release step — there is no need to spawn throwaway children. `sd plan create` makes a plan with zero children and an empty steps blueprint; you then assemble it from existing seeds and pin the exact order.
+
+```bash
+# 1. Create an adopt-only plan anchored to a parent/epic seed
+$ sd plan create seeds-9c4d --name "Release train v2"
+✓ plan pl-7f2a created (status: approved, adopt-only)
+
+# 2. Adopt existing seeds in order (append by default)
+$ sd plan adopt pl-7f2a seeds-aa05 seeds-bb11
+# Insert with positional control:
+$ sd plan adopt pl-7f2a seeds-cc22 --at 1            # 1-based slot in children
+$ sd plan adopt pl-7f2a seeds-dd33 --after seeds-aa05
+$ sd plan adopt pl-7f2a seeds-ee44 --before seeds-bb11
+
+# 3. Pin the exact final order in one call (must be a permutation of children)
+$ sd plan reorder pl-7f2a seeds-cc22 seeds-aa05 seeds-dd33 seeds-bb11 seeds-ee44
+```
+
+`--at`, `--before`, and `--after` are mutually exclusive; omit all three to append. `sd plan reorder` is a pure ordering operation — it must list every child exactly once (no adds, drops, or duplicates; use `adopt`/`release` for those). warren's plan-run consumes `plan.children` order verbatim (`seq = index + 1`), so `reorder` is the surface for guaranteeing the release seed runs last. `<plan-id>` accepts a `pl-*` id or the parent seed id everywhere on the planning surface.
 
 ### Editing a plan in place
 

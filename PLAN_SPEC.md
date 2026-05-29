@@ -157,9 +157,20 @@ sd plan validate <pl-id>                               Re-run validation against
 
 sd plan templates                                      List available templates from config.
 
+sd plan create   <seed-id> [--name <text>]             Create an adopt-only plan: zero spawned
+                 [--template <name>]                   children, empty steps blueprint. Populate via
+                                                       `sd plan adopt`. Rejects a pre-existing
+                                                       non-draft plan for the seed.
+
 sd plan adopt    <plan-id> <seed-id...> [--step <i>]   Adopt existing open seeds into a plan
-                                                       (link-only; bumps revision). `--step` is the
+                 [--at <i> | --before <s> | --after <s>] (link-only; bumps revision). `--step` is the
                                                        1-based blueprint step index to anchor to.
+                                                       --at/--before/--after (mutually exclusive)
+                                                       control the children insertion position.
+
+sd plan reorder  <plan-id> <seed-id...>                Set the exact plan.children order. The ids must
+                                                       be a permutation of current children (no adds,
+                                                       drops, or dupes). Bumps revision.
 
 sd plan release  <plan-id> <seed-id...>                Detach seeds from a plan without closing them
                                                        (link-only; bumps revision).
@@ -454,6 +465,18 @@ Release inverts each mutation:
 - `plan.revision` ← `prev + 1`
 
 `sd plan show` renders adopted entries with a trailing `(adopted)` muted tag in human output; `--json` includes `adopted: true` on each child summary that's listed in `plan.adoptedChildren`.
+
+### Adopt-only plans and ordering (`sd plan create`, `sd plan reorder`, positional adopt)
+
+The "release train" use case (seeds-3dd1) assembles a set of already-existing seeds into a single plan, in a controlled order, ending with a release step — with no spawned or placeholder children. Three additions support it:
+
+- **`sd plan create <seed-id>`** writes a plan row with `children: []`, `sections: { steps: [] }`, `status: "approved"`, `revision: 1`, and links the parent seed (`seed.plan_id ← <pl-id>`). No children means no `blockedBy` edges yet — those land as seeds are adopted. `--name` sets the human label (defaults to the seed title); `--template` overrides the seed-type default. A pre-existing non-draft plan for the seed is rejected (exit non-zero) — adopt into the existing plan instead. Because the steps blueprint is empty, `sd plan validate` will report missing required sections for the chosen template; this is expected for adopt-only plans and does not affect warren's plan-run, which consumes `plan.children`.
+
+- **`sd plan adopt` positioning** — `--at <i>` inserts the adopted batch at a 1-based slot in `plan.children` (valid range `1..len+1`); `--before <seed>` / `--after <seed>` anchor on an existing child id. The three are mutually exclusive; omitting all appends (prior behavior). The adopted ids are inserted as a contiguous block preserving command-line order. Positioning is orthogonal to `--step` (which sets `plan_step_index`); both may be supplied.
+
+- **`sd plan reorder <plan-id> <seed-id...>`** sets the exact `plan.children` order in one call. The supplied ids must be a permutation of the current children — every child listed exactly once, no extras, no duplicates (use `adopt`/`release` to change membership). Only the plan row's `children` array order changes; seed link state (`plan_id`, `plan_step_index`, `blockedBy` edges) is untouched. Revision bumps once. Lock: `plans.jsonl` only (no issue mutation). warren's plan-run reads `plan.children` order verbatim (`seq = index + 1`), so `reorder` is the surface for pinning a release seed last.
+
+`sd plan create` and `sd plan reorder` accept a `pl-*` id or the parent seed id wherever a plan id is expected, consistent with the rest of the planning surface.
 
 ### Validation (pre-write, fail-fast)
 

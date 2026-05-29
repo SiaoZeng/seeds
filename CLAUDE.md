@@ -228,8 +228,15 @@ sd plan show <pl-id>                   Show plan with sections, children, and ne
 sd plan validate <pl-id>               Re-run validation against the current template
 sd plan list                           List plans
   --seed --status --outcome --template
+sd plan create <seed-id>               Create an adopt-only plan (zero spawned children; populate via adopt)
+  --name <text>                        Human-readable plan label (defaults to seed title)
+  --template <name>                    Plan template (defaults to the seed type's default)
 sd plan adopt <pl-id> <seed-id...>     Adopt already-open seeds into a plan (link-only; bumps revision)
   --step <i>                           Anchor adopted seeds at a 1-based blueprint step index
+  --at <i>                             1-based position in plan.children to insert (default: append)
+  --before <seed>                      Insert the adopted seeds before this existing child
+  --after <seed>                       Insert the adopted seeds after this existing child
+sd plan reorder <pl-id> <seed-id...>   Set the exact plan.children order (permutation; bumps revision)
 sd plan release <pl-id> <seed-id...>   Detach seeds from a plan without closing them (link-only; bumps revision)
 sd plan edit <id>                      Edit plan fields in place (accepts plan id or seed id); bumps revision
   --name <text>                        Set the plan's human-readable label
@@ -288,6 +295,7 @@ sd plan review <pl-id> --by <name>     Record a reviewer (informational; not a s
 - Steps accept an optional `labels: string[]` field that flows to the spawned/adopted child seed. Values are normalized (lowercased, trimmed, deduped) and merged additively on adoption — they never clobber labels the user added by hand. Use this to tag agent-spawned children (e.g. `"labels": ["nightwatch"]`) without post-hoc `sd label add` calls.
 - Plan outcomes (`success | partial | failure`) and reviewers are storage-only — they never gate child progress.
 - Use `sd plan edit` for targeted field-level fixes (typo in approach, rename a step, change a step's priority/type). Structural edits — adding, removing, or reordering steps — still require `sd plan submit --overwrite`. Editing `--section approach` refreshes the `seeds:plan-backref` block on every child seed; `--step <i> --title <text>` renames the corresponding child seed.
+- For a "release train" — running a set of *already-existing* seeds serially in a controlled order — use `sd plan create <seed>` to make an adopt-only plan (zero spawned children, empty steps blueprint), then `sd plan adopt` the real seeds and `sd plan reorder` to pin the exact order. This avoids the old placeholder-step dance (submit throwaway steps → release → close). `sd plan adopt` takes `--at <i>` / `--before <seed>` / `--after <seed>` (mutually exclusive) to insert at a position; `sd plan reorder <plan> <seed-ids...>` must list every child exactly once. warren's plan-run consumes `plan.children` order verbatim (`seq = index + 1`).
 
 ## Testing
 

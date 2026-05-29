@@ -13,7 +13,7 @@ import {
 import { loadPlanContext, planForIssue, summarisePlanChildren } from "../plan-context.ts";
 import { readIssues } from "../store.ts";
 import type { Issue } from "../types.ts";
-import { runShow as runPlanShow } from "./plan.ts";
+import { runShow as runPlanShow } from "./plan-show.ts";
 
 const HUMAN_DIVIDER = "─".repeat(60);
 
