@@ -1,7 +1,7 @@
 {
-	"$schema": "https://biomejs.dev/schemas/2.4.6/schema.json",
+	"$schema": "https://biomejs.dev/schemas/2.4.14/schema.json",
 	"files": {
-		"includes": ["src/**", "scripts/**", "extensions/**", "!**/node_modules"]
+		"includes": ["src/**", "scripts/**", "extensions/**", "!**/node_modules", "!**/.bun"]
 	},
 	"assist": { "actions": { "source": { "organizeImports": "on" } } },
 	"linter": {
@@ -52,6 +52,12 @@
 		"lineWidth": 100
 	},
 	"overrides": [
+		{
+			"includes": ["scripts/check-all.ts", "scripts/check-ci-parity.ts"],
+			"formatter": {
+				"enabled": false
+			}
+		},
 		{
 			"includes": [
 				"src/index.ts",
