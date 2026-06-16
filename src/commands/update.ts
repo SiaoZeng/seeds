@@ -2,6 +2,7 @@ import type { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
 import { outputJson, printSuccess } from "../output.ts";
 import { affectedPlanIds, applyPlanTransitions } from "../plan-lifecycle.ts";
+import { isValidPriority, PRIORITY_ERROR, parsePriority } from "../priority.ts";
 import {
 	issuesPath,
 	plansPath,
@@ -46,11 +47,6 @@ function parseArgs(args: string[]) {
 	return flags;
 }
 
-function parsePriority(val: string): number {
-	if (val.toUpperCase().startsWith("P")) return Number.parseInt(val.slice(1), 10);
-	return Number.parseInt(val, 10);
-}
-
 // Accept only a JSON object literal (not array, scalar, or null) — extensions
 // is a Record<string, unknown> by contract. See plan pl-c195 risk #5.
 function parseExtensionsPatch(raw: string): Record<string, unknown> {
@@ -89,7 +85,7 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		if (typeof flags.status === "string") {
 			const s = flags.status;
 			if (!(VALID_STATUSES as readonly string[]).includes(s)) {
-				throw new Error(`--status must be one of: ${VALID_STATUSES.join(", ")}`);
+				throw new Error(`Invalid --status value: ${s}. Valid: ${VALID_STATUSES.join("|")}`);
 			}
 			patch.status = s as Issue["status"];
 			// Reopening (status moving away from "closed"): drop stale close metadata
@@ -119,13 +115,13 @@ export async function run(args: string[], seedsDir?: string): Promise<void> {
 		if (typeof flags.type === "string") {
 			const t = flags.type;
 			if (!(VALID_TYPES as readonly string[]).includes(t)) {
-				throw new Error(`--type must be one of: ${VALID_TYPES.join(", ")}`);
+				throw new Error(`Invalid --type value: ${t}. Valid: ${VALID_TYPES.join("|")}`);
 			}
 			patch.type = t as Issue["type"];
 		}
 		if (typeof flags.priority === "string") {
 			const p = parsePriority(flags.priority);
-			if (Number.isNaN(p) || p < 0 || p > 4) throw new Error("--priority must be 0-4 or P0-P4");
+			if (!isValidPriority(p)) throw new Error(PRIORITY_ERROR);
 			patch.priority = p;
 		}
 

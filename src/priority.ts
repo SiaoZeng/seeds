@@ -4,8 +4,8 @@
 // case-insensitive). Returns NaN for unparseable input so callers can produce a
 // uniform error message. The valid range is 0–4 (P0 = highest, P4 = lowest).
 
-export const MIN_PRIORITY = 0;
-export const MAX_PRIORITY = 4;
+const MIN_PRIORITY = 0;
+const MAX_PRIORITY = 4;
 export const PRIORITY_ERROR = "--priority must be 0-4 or P0-P4";
 
 /**
@@ -16,8 +16,9 @@ export const PRIORITY_ERROR = "--priority must be 0-4 or P0-P4";
 export function parsePriority(val: string | boolean | undefined, defaultVal = 2): number {
 	if (val === undefined || val === true) return defaultVal;
 	const s = String(val);
-	if (s.toUpperCase().startsWith("P")) return Number.parseInt(s.slice(1), 10);
-	return Number.parseInt(s, 10);
+	const digits = s.toUpperCase().startsWith("P") ? s.slice(1) : s;
+	if (!/^\d+$/.test(digits)) return Number.NaN;
+	return Number.parseInt(digits, 10);
 }
 
 /** True if `p` is a finite integer in the inclusive 0–4 range. */

@@ -21,7 +21,7 @@ import pino from "pino";
 export type Logger = pino.Logger;
 
 export interface CreateLogOptions {
-	level?: pino.Level;
+	level?: pino.LevelWithSilent;
 	/** Force pretty (true) or NDJSON (false). Defaults to TTY auto-detection. */
 	pretty?: boolean;
 	/** Custom sink — bypasses the pretty transport (used by tests). */
@@ -46,9 +46,27 @@ export const REDACT_PATHS: readonly string[] = [
 	"headers.authorization",
 ];
 
-function resolveLevel(): pino.Level {
-	const explicit = process.env.SEEDS_LOG_LEVEL as pino.Level | undefined;
-	if (explicit) return explicit;
+// pino's built-in levels. Kept as a literal set so we can validate
+// SEEDS_LOG_LEVEL without trusting an arbitrary env value at the type cast —
+// an unknown value (e.g. SEEDS_LOG_LEVEL=chatty) would otherwise crash pino at
+// logger init. Mirrors the keys of `pino.levels.values`.
+const VALID_LEVELS: ReadonlySet<string> = new Set<pino.LevelWithSilent>([
+	"trace",
+	"debug",
+	"info",
+	"warn",
+	"error",
+	"fatal",
+	"silent",
+]);
+
+function isValidLevel(value: string): value is pino.LevelWithSilent {
+	return VALID_LEVELS.has(value);
+}
+
+function resolveLevel(): pino.LevelWithSilent {
+	const explicit = process.env.SEEDS_LOG_LEVEL;
+	if (explicit && isValidLevel(explicit)) return explicit;
 	if (process.env.SEEDS_DEBUG === "1") return "debug";
 	return "info";
 }
@@ -63,11 +81,15 @@ export function createLog(options: CreateLogOptions = {}): Logger {
 	};
 
 	if (pretty && !options.destination) {
-		base.transport = {
-			target: "pino-pretty",
-			options: { colorize: true, translateTime: "SYS:HH:MM:ss.l" },
-		};
-		return pino(base);
+		// Inline `transport` so knip's pino plugin can statically see the
+		// `pino-pretty` target string and not flag it as an unused dep.
+		return pino({
+			...base,
+			transport: {
+				target: "pino-pretty",
+				options: { colorize: true, translateTime: "SYS:HH:MM:ss.l" },
+			},
+		});
 	}
 
 	return options.destination ? pino(base, options.destination) : pino(base);
