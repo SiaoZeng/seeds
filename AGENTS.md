@@ -86,27 +86,41 @@ bun run typecheck                 # tsc --noEmit
 bun run test:ci                   # bun test with coverage + junit reporters
 ```
 
-Quality gates (each lives in `scripts/`):
+Quality gates (the os-eco `check:all` standard — see
+`docs/check-all-standard.md` at the os-eco root):
 
 ```bash
+bun run check:all                 # scripts/check-all.ts — quiet runner over all 9 gates
+bun run verify                    # alias for check:all (agent-facing entry point)
+```
+
+`check:all` resolves its gate manifest from package.json and runs, in
+order: `lint`, `typecheck`, `check:agents`, `check:dups`, `check:deps`,
+`check:size`, `check:debt`, `check:coverage`, `check:ci-parity`.
+Individual gates:
+
+```bash
+bun run check:agents              # scripts/validate-agents-md.ts (this file)
+bun run check:dups                # jscpd duplication budget (.jscpd.json)
+bun run check:deps                # knip --dependencies (knip.json)
 bun run check:size                # scripts/check-file-sizes.ts (ratchet down)
 bun run check:debt                # scripts/check-debt-markers.ts (ratchet down)
 bun run check:coverage            # scripts/check-coverage.ts (ratchet up)
-bun run check:agents              # scripts/validate-agents-md.ts (this file)
+bun run check:ci-parity           # scripts/check-ci-parity.ts (CI <-> check:all parity)
 bun run report:test-timing        # slowest suites/tests from junit.xml
 bun run report:quality            # consolidated quality summary
 ```
+
+`scripts/check-all.ts` and `scripts/check-ci-parity.ts` are
+byte-identical to `templates/l5-toolkit/scripts/` at the os-eco root —
+never edit them in place; per-repo CI-parity escape hatches live in
+`scripts/ci-parity-config.json`.
 
 The ratchet scripts read JSON budgets co-located in `scripts/`
 (`scripts/file-size-budgets.json`, `scripts/debt-markers-budget.json`,
 `scripts/coverage-budgets.json`). Size and debt budgets only tighten
 (move down); coverage floors only rise. Raise a budget only with a
 justification in the commit body linking the tracker id.
-
-> Duplicate-detection (`jscpd`, see `.jscpd.json`) and dependency
-> hygiene (`knip`, see `knip.json`) are configured but not yet wired to
-> `bun run` scripts; that wiring lands in a later L5 child. Until then,
-> invoke them via `bunx` if you need a one-off check.
 
 User-facing `sd` reference:
 

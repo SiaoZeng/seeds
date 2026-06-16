@@ -105,11 +105,17 @@ bun run typecheck             # tsc --noEmit
 
 ## Quality Gates
 
-Run all three before committing:
+Run before committing:
 
 ```bash
-bun test && bun run lint && bun run typecheck
+bun run check:all     # quiet runner over all 9 gates (alias: bun run verify)
 ```
+
+`check:all` (`scripts/check-all.ts`, byte-identical fleet-wide — never edit it in place) resolves
+its manifest from package.json and runs, in order: `lint`, `typecheck`, `check:agents`,
+`check:dups`, `check:deps`, `check:size`, `check:debt`, `check:coverage`, `check:ci-parity`.
+See `docs/check-all-standard.md` at the os-eco root. Per-repo CI-parity escape hatches live in
+`scripts/ci-parity-config.json` (aliases + justified ciOnly entries), never in the script itself.
 
 ## On-Disk Format (.seeds/)
 
@@ -349,7 +355,7 @@ Bump via: `bun run version:bump <major|minor|patch>`
 When ending a work session, you MUST complete ALL steps below. Work is NOT complete until `git push` succeeds.
 
 1. **File issues for remaining work** — Create issues for anything that needs follow-up
-2. **Run quality gates** (if code changed): `bun test && bun run lint && bun run typecheck`
+2. **Run quality gates** (if code changed): `bun run check:all`
 3. **Update issue status** — Close finished work, update in-progress items
 4. **Push to remote** (MANDATORY):
    ```bash

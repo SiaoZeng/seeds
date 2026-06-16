@@ -14,8 +14,28 @@ export function setQuiet(v: boolean): void {
 	_quiet = v;
 }
 
+function isEpipe(err: unknown): boolean {
+	return typeof err === "object" && err !== null && (err as NodeJS.ErrnoException).code === "EPIPE";
+}
+
+// Write to stdout, exiting cleanly when the reader closed the pipe early
+// (the common `sd ... --json | head` idiom, or any consumer that exits before
+// draining). The Bun.write path bypasses process.stdout, so the process-level
+// "error" EPIPE handler in index.ts cannot catch it; without this guard a large
+// write to a broken pipe throws EPIPE (and on Linux can busy-spin) instead of
+// terminating. Exit 0 mirrors the canonical Node `process.stdout.on('error')`
+// recipe: a downstream reader hanging up is not an sd failure.
+export async function writeStdout(text: string): Promise<void> {
+	try {
+		await Bun.write(Bun.stdout, text);
+	} catch (err) {
+		if (isEpipe(err)) process.exit(0);
+		throw err;
+	}
+}
+
 export async function outputJson(data: unknown): Promise<void> {
-	await Bun.write(Bun.stdout, `${JSON.stringify(data, null, 2)}\n`);
+	await writeStdout(`${JSON.stringify(data, null, 2)}\n`);
 }
 
 export function printSuccess(msg: string): void {

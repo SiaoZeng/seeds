@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `sd` now exits cleanly (exit 0) when a downstream reader closes the pipe early — the common `sd ... --json | head` idiom. Previously a large stdout write to an early-closing reader threw an uncaught EPIPE error or, on Linux, busy-spun at 100% CPU. Added process-level `stdout`/`stderr` EPIPE handlers plus an EPIPE-safe `writeStdout()` helper for the `Bun.write(Bun.stdout)` path (which bypasses the stream objects); `outputJson` and all direct stdout writes route through it. (seeds-3024)
+
+### Internal
+- Adopted the canonical fleet `check:all` standard: a byte-identical quiet runner (`scripts/check-all.ts`) over one canonical gate manifest, with `verify` as the agent-facing alias and a `check:ci-parity` gate (`scripts/check-ci-parity.ts`) that verifies CI ⇄ local parity. Per-repo escape hatches live in `scripts/ci-parity-config.json`. (pl-78eb)
+
 ## [0.5.10] - 2026-06-09
 
 Nightwatch patrol fixes (plan pl-a847): five narrow correctness, validation, and documentation fixes from a nightwatch sweep.
