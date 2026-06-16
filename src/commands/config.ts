@@ -16,7 +16,7 @@ import { join } from "node:path";
 import { Command } from "commander";
 import { findSeedsDir } from "../config.ts";
 import { configSchema } from "../config-schema.ts";
-import { accent, muted, outputJson, printSuccess } from "../output.ts";
+import { accent, muted, outputJson, printSuccess, writeStdout } from "../output.ts";
 import { withLock } from "../store.ts";
 import { CONFIG_FILE } from "../types.ts";
 import { compileSchema } from "../validation.ts";
@@ -122,10 +122,10 @@ function displayValue(v: YamlValue): string {
 async function runSchema(jsonMode: boolean): Promise<void> {
 	const schema = configSchema();
 	if (jsonMode) {
-		await Bun.write(Bun.stdout, `${JSON.stringify(schema)}\n`);
+		await writeStdout(`${JSON.stringify(schema)}\n`);
 		return;
 	}
-	await Bun.write(Bun.stdout, `${JSON.stringify(schema, null, 2)}\n`);
+	await writeStdout(`${JSON.stringify(schema, null, 2)}\n`);
 }
 
 async function runShow(pathArg: string | undefined, jsonMode: boolean): Promise<void> {
@@ -145,7 +145,7 @@ async function runShow(pathArg: string | undefined, jsonMode: boolean): Promise<
 		} else if (typeof value === "string") {
 			console.log(value);
 		} else {
-			await Bun.write(Bun.stdout, `${JSON.stringify(value)}\n`);
+			await writeStdout(`${JSON.stringify(value)}\n`);
 		}
 		return;
 	}

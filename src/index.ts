@@ -2,10 +2,25 @@
 import chalk from "chalk";
 import { Command, Help } from "commander";
 import { handleTopLevelError } from "./error-handler.ts";
-import { brand, muted, outputJson, setQuiet } from "./output.ts";
+import { brand, muted, outputJson, setQuiet, writeStdout } from "./output.ts";
 import { VERSION } from "./version.ts";
 
 export { VERSION };
+
+// Exit cleanly when a downstream reader closes the pipe early (the common
+// `sd ... --json | head` idiom). Node/Bun deliver a broken pipe as an EPIPE
+// "error" event on the stream rather than a SIGPIPE signal; without a handler
+// the process throws an uncaught error or, on Linux, busy-spins at 100% CPU
+// retrying the write. (The Bun.write stdout path is guarded separately in
+// src/output.ts since it bypasses these stream objects.)
+function exitOnEpipe(err: NodeJS.ErrnoException): void {
+	if (err.code === "EPIPE") {
+		process.exit(0);
+	}
+	throw err;
+}
+process.stdout.on("error", exitOnEpipe);
+process.stderr.on("error", exitOnEpipe);
 
 // Apply quiet mode early so it affects all output during command execution
 const rawArgs = process.argv.slice(2);
@@ -176,7 +191,7 @@ async function main(): Promise<void> {
 					error: errMsg,
 				};
 				if (suggestion) payload.suggestion = suggestion;
-				await Bun.write(Bun.stdout, `${JSON.stringify(payload, null, 2)}\n`);
+				await writeStdout(`${JSON.stringify(payload, null, 2)}\n`);
 			} else {
 				process.stderr.write(`${errMsg}\n`);
 			}

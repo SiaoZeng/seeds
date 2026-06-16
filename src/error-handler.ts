@@ -6,6 +6,7 @@
 // devDependencies and may be absent from end-user installs.
 
 import chalk from "chalk";
+import { writeStdout } from "./output.ts";
 
 type LoggerLoader = () => Promise<{ log: { debug: (obj: unknown, msg?: string) => void } }>;
 
@@ -42,7 +43,7 @@ export async function handleTopLevelError(
 		if (opts.write) {
 			await opts.write(line);
 		} else {
-			await Bun.write(Bun.stdout, line);
+			await writeStdout(line);
 		}
 	} else {
 		const line = chalk.red(`Error: ${msg}`);

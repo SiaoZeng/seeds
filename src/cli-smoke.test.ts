@@ -16,7 +16,7 @@
 // the command's own *.test.ts file, not here.
 
 import { describe, expect, test } from "bun:test";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { VERSION } from "./version.ts";
@@ -157,4 +157,63 @@ describe("sd CLI smoke", () => {
 			await rm(cwd, { recursive: true, force: true });
 		}
 	});
+
+	test("large --json output to an early-closing reader exits promptly (EPIPE, seeds-3024)", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "seeds-epipe-"));
+		try {
+			const init = await run(["init"], cwd);
+			expect(init.exitCode).toBe(0);
+
+			// Inflate the store so `list --json` far exceeds the OS pipe buffer
+			// (~64KB), guaranteeing sd still has data buffered when `head` closes
+			// the read end.
+			const dbPath = join(cwd, ".seeds", "issues.jsonl");
+			const lines: string[] = [];
+			for (let i = 0; i < 500; i++) {
+				lines.push(
+					JSON.stringify({
+						id: `seeds-${i.toString(16).padStart(4, "0")}`,
+						title: "x".repeat(400),
+						status: "open",
+						type: "task",
+						priority: 2,
+						createdAt: "2026-06-16T00:00:00.000Z",
+						updatedAt: "2026-06-16T00:00:00.000Z",
+					}),
+				);
+			}
+			await writeFile(dbPath, `${lines.join("\n")}\n`);
+
+			// Faithful reproduction of the incident: pipe a large `--json` payload
+			// into a reader (`head`) that drains a little and exits, closing the
+			// pipe early. Before the EPIPE fix this hung forever (busy-spin on
+			// Linux). sd's own stderr is captured so we can assert it exited
+			// cleanly rather than crashing with an EPIPE stack.
+			const errPath = join(cwd, "sd-stderr.log");
+			const proc = Bun.spawn(
+				[
+					"bash",
+					"-c",
+					`bun run ${JSON.stringify(CLI)} list --json 2>${JSON.stringify(errPath)} | head -c 50 >/dev/null`,
+				],
+				{ cwd, stdout: "ignore", stderr: "ignore", env: { ...process.env, NO_COLOR: "1" } },
+			);
+
+			const timeout = new Promise<"timeout">((resolve) =>
+				setTimeout(() => resolve("timeout"), 10_000),
+			);
+			const result = await Promise.race([proc.exited, timeout]);
+			if (result === "timeout") {
+				proc.kill(9);
+				throw new Error("sd hung on a broken pipe (EPIPE) instead of exiting");
+			}
+
+			const errLog = await Bun.file(errPath)
+				.text()
+				.catch(() => "");
+			expect(errLog).not.toContain("EPIPE");
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	}, 15_000);
 });
