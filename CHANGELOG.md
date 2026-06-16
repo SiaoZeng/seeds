@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.11] - 2026-06-16
+
 ### Fixed
 - `sd` now exits cleanly (exit 0) when a downstream reader closes the pipe early — the common `sd ... --json | head` idiom. Previously a large stdout write to an early-closing reader threw an uncaught EPIPE error or, on Linux, busy-spun at 100% CPU. Added process-level `stdout`/`stderr` EPIPE handlers plus an EPIPE-safe `writeStdout()` helper for the `Bun.write(Bun.stdout)` path (which bypasses the stream objects); `outputJson` and all direct stdout writes route through it. (seeds-3024)
 
