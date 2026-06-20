@@ -218,16 +218,15 @@ describe("sync — printSuccess + outputJson routing", () => {
 		);
 
 		const out: string[] = [];
-		const origWrite = Bun.write;
-		// @ts-expect-error: stubbing for test capture
-		Bun.write = async (_dst: unknown, data: string) => {
+		const origWrite = process.stdout.write.bind(process.stdout);
+		process.stdout.write = ((data: string) => {
 			out.push(data);
-			return data.length;
-		};
+			return true;
+		}) as typeof process.stdout.write;
 		try {
 			await run(["--json"], join(repo, ".seeds"));
 		} finally {
-			Bun.write = origWrite;
+			process.stdout.write = origWrite;
 		}
 
 		const payload = JSON.parse(out.join(""));
@@ -240,16 +239,15 @@ describe("sync — printSuccess + outputJson routing", () => {
 	test("--json no-op emits canonical payload with committed:false", async () => {
 		const repo = initRepo();
 		const out: string[] = [];
-		const origWrite = Bun.write;
-		// @ts-expect-error: stubbing for test capture
-		Bun.write = async (_dst: unknown, data: string) => {
+		const origWrite = process.stdout.write.bind(process.stdout);
+		process.stdout.write = ((data: string) => {
 			out.push(data);
-			return data.length;
-		};
+			return true;
+		}) as typeof process.stdout.write;
 		try {
 			await run(["--json"], join(repo, ".seeds"));
 		} finally {
-			Bun.write = origWrite;
+			process.stdout.write = origWrite;
 		}
 
 		const payload = JSON.parse(out.join(""));

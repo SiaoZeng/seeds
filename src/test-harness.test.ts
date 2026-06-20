@@ -60,9 +60,9 @@ describe("runCli capture channels", () => {
 		expect(stdout).toContain("alpha");
 	});
 
-	test("captures Bun.write(Bun.stdout) (used by outputJson)", async () => {
+	test("captures stdout writes from outputJson", async () => {
 		await runCli(["init"], tmpDir);
-		// stats --json uses outputJson which routes through Bun.write(Bun.stdout)
+		// stats --json uses outputJson which routes through writeStdout
 		const { stdout, exitCode } = await runCli(["stats", "--json"], tmpDir);
 		expect(exitCode).toBe(0);
 		const parsed = JSON.parse(stdout) as { success: boolean };

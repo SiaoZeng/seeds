@@ -216,4 +216,60 @@ describe("sd CLI smoke", () => {
 			await rm(cwd, { recursive: true, force: true });
 		}
 	}, 15_000);
+
+	test("large --json output to a fully-draining reader exits promptly (backpressure, seeds-18dc)", async () => {
+		const cwd = await mkdtemp(join(tmpdir(), "seeds-drain-"));
+		try {
+			const init = await run(["init"], cwd);
+			expect(init.exitCode).toBe(0);
+
+			// Inflate the store so `list --json` far exceeds the OS pipe buffer
+			// (~64KB). seeds-3024 only covered an early-closing reader (`| head`);
+			// this covers a reader that stays OPEN and fully drains. The one-shot
+			// Bun.write busy-spun at 100% CPU on Linux here (no EPIPE, reader open)
+			// until backpressure-aware chunked writes landed.
+			const dbPath = join(cwd, ".seeds", "issues.jsonl");
+			const lines: string[] = [];
+			for (let i = 0; i < 1000; i++) {
+				lines.push(
+					JSON.stringify({
+						id: `seeds-${i.toString(16).padStart(4, "0")}`,
+						title: "x".repeat(400),
+						status: "open",
+						type: "task",
+						priority: 2,
+						createdAt: "2026-06-16T00:00:00.000Z",
+						updatedAt: "2026-06-16T00:00:00.000Z",
+					}),
+				);
+			}
+			await writeFile(dbPath, `${lines.join("\n")}\n`);
+
+			// `cat` keeps the read end open and drains everything; the payload is
+			// piped through to a byte count so we can assert the full output made
+			// it across without truncation. --limit overrides the default 50-issue
+			// cap so the payload genuinely clears the pipe buffer.
+			const proc = Bun.spawn(
+				["bash", "-c", `bun run ${JSON.stringify(CLI)} list --json --limit 1000 | cat | wc -c`],
+				{ cwd, stdout: "pipe", stderr: "ignore", env: { ...process.env, NO_COLOR: "1" } },
+			);
+
+			const timeout = new Promise<"timeout">((resolve) =>
+				setTimeout(() => resolve("timeout"), 10_000),
+			);
+			const result = await Promise.race([proc.exited, timeout]);
+			if (result === "timeout") {
+				proc.kill(9);
+				throw new Error("sd busy-spun on a full pipe (backpressure) instead of exiting");
+			}
+			expect(result).toBe(0);
+
+			const byteCount = Number((await new Response(proc.stdout).text()).trim());
+			// Sanity: the payload genuinely exceeded the pipe buffer, so the
+			// backpressure path was actually exercised.
+			expect(byteCount).toBeGreaterThan(64 * 1024);
+		} finally {
+			await rm(cwd, { recursive: true, force: true });
+		}
+	}, 15_000);
 });

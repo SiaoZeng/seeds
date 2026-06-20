@@ -18,20 +18,36 @@ function isEpipe(err: unknown): boolean {
 	return typeof err === "object" && err !== null && (err as NodeJS.ErrnoException).code === "EPIPE";
 }
 
-// Write to stdout, exiting cleanly when the reader closed the pipe early
-// (the common `sd ... --json | head` idiom, or any consumer that exits before
-// draining). The Bun.write path bypasses process.stdout, so the process-level
-// "error" EPIPE handler in index.ts cannot catch it; without this guard a large
-// write to a broken pipe throws EPIPE (and on Linux can busy-spin) instead of
-// terminating. Exit 0 mirrors the canonical Node `process.stdout.on('error')`
-// recipe: a downstream reader hanging up is not an sd failure.
+// Write to stdout with backpressure, exiting cleanly when the reader closes
+// the pipe early (the common `sd ... --json | head` idiom, or any consumer
+// that exits before draining).
+//
+// We write through the Node stream (process.stdout) rather than a single
+// `Bun.write(Bun.stdout, text)`: when the payload exceeds the OS pipe buffer
+// (~64KB) and the reader is slow but stays OPEN (`| cat`, `| grep`, `| wc`),
+// the one-shot Bun.write busy-spins at 100% CPU on Linux and never exits
+// (seeds-18dc) — no EPIPE is raised because the reader hasn't closed.
+// stream.write() returns false when the kernel buffer is full; awaiting
+// 'drain' yields instead of spinning. The process-level "error" EPIPE handler
+// in index.ts covers the early-close case (seeds-3024) since this path now
+// flows through process.stdout; the local isEpipe guard is a belt-and-braces
+// exit-0 for the write callback. A downstream reader hanging up is not an sd
+// failure.
 export async function writeStdout(text: string): Promise<void> {
-	try {
-		await Bun.write(Bun.stdout, text);
-	} catch (err) {
-		if (isEpipe(err)) process.exit(0);
-		throw err;
-	}
+	const stream = process.stdout;
+	await new Promise<void>((resolve, reject) => {
+		const flushed = stream.write(text, (err) => {
+			if (err) {
+				if (isEpipe(err)) process.exit(0);
+				reject(err);
+			}
+		});
+		if (flushed) {
+			resolve();
+		} else {
+			stream.once("drain", resolve);
+		}
+	});
 }
 
 export async function outputJson(data: unknown): Promise<void> {
