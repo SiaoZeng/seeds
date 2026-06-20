@@ -11,7 +11,7 @@ import {
 	TEMPLATES_FILE,
 } from "../types.ts";
 
-const MERGE_UNION_LINES = [
+export const MERGE_UNION_LINES = [
 	".seeds/issues.jsonl merge=union",
 	".seeds/templates.jsonl merge=union",
 	".seeds/plans.jsonl merge=union",

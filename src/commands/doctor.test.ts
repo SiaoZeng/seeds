@@ -566,6 +566,36 @@ describe("doctor: gitattributes check", () => {
 		const content = readFileSync(gitattrsPath, "utf8");
 		expect(content).toContain(".seeds/issues.jsonl merge=union");
 		expect(content).toContain(".seeds/templates.jsonl merge=union");
+		expect(content).toContain(".seeds/plans.jsonl merge=union");
+	});
+
+	test("warns when only the plans.jsonl entry is missing", async () => {
+		await run(["init"], tmpDir);
+		const gitattrsPath = join(tmpDir, ".gitattributes");
+		// Simulate a project whose .gitattributes predates plans support.
+		writeFileSync(
+			gitattrsPath,
+			".seeds/issues.jsonl merge=union\n.seeds/templates.jsonl merge=union\n",
+		);
+
+		const result = await runJson<DoctorResult>(["doctor"], tmpDir);
+		const check = result.checks.find((ch) => ch.name === "gitattributes");
+		expect(check?.status).toBe("warn");
+		expect(check?.details).toContain("Missing: .seeds/plans.jsonl merge=union");
+	});
+
+	test("--fix backfills a missing plans.jsonl entry", async () => {
+		await run(["init"], tmpDir);
+		const gitattrsPath = join(tmpDir, ".gitattributes");
+		writeFileSync(
+			gitattrsPath,
+			".seeds/issues.jsonl merge=union\n.seeds/templates.jsonl merge=union\n",
+		);
+
+		const after = await runJson<DoctorResult>(["doctor", "--fix"], tmpDir);
+		const check = after.checks.find((ch) => ch.name === "gitattributes");
+		expect(check?.status).toBe("pass");
+		expect(readFileSync(gitattrsPath, "utf8")).toContain(".seeds/plans.jsonl merge=union");
 	});
 });
 

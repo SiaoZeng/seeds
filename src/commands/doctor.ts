@@ -13,6 +13,7 @@ import {
 	VALID_STATUSES,
 	VALID_TYPES,
 } from "../types.ts";
+import { MERGE_UNION_LINES } from "./init.ts";
 
 interface DoctorCheck {
 	name: string;
@@ -485,11 +486,10 @@ function checkGitattributes(seedsDir: string): DoctorCheck {
 		details.push(".gitattributes file not found");
 	} else {
 		const content = readFileSync(gitattrsPath, "utf8");
-		if (!content.includes(".seeds/issues.jsonl merge=union")) {
-			details.push("Missing: .seeds/issues.jsonl merge=union");
-		}
-		if (!content.includes(".seeds/templates.jsonl merge=union")) {
-			details.push("Missing: .seeds/templates.jsonl merge=union");
+		for (const line of MERGE_UNION_LINES) {
+			if (!content.includes(line)) {
+				details.push(`Missing: ${line}`);
+			}
 		}
 	}
 
@@ -798,19 +798,15 @@ function fixBidirectional(seedsDir: string, fixed: string[]): void {
 function fixGitattributes(seedsDir: string, fixed: string[]): void {
 	const projectRoot = projectRootFromSeedsDir(seedsDir);
 	const gitattrsPath = join(projectRoot, ".gitattributes");
-	const issueEntry = ".seeds/issues.jsonl merge=union";
-	const tplEntry = ".seeds/templates.jsonl merge=union";
 
 	if (!existsSync(gitattrsPath)) {
-		writeFileSync(gitattrsPath, `${issueEntry}\n${tplEntry}\n`);
+		writeFileSync(gitattrsPath, `${MERGE_UNION_LINES.join("\n")}\n`);
 		fixed.push("Created .gitattributes with merge=union entries");
 		return;
 	}
 
 	const content = readFileSync(gitattrsPath, "utf8");
-	const missing: string[] = [];
-	if (!content.includes(issueEntry)) missing.push(issueEntry);
-	if (!content.includes(tplEntry)) missing.push(tplEntry);
+	const missing = MERGE_UNION_LINES.filter((line) => !content.includes(line));
 
 	if (missing.length > 0) {
 		const suffix = missing.map((e) => `${e}\n`).join("");
