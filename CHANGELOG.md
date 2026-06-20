@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.13] - 2026-06-20
+
+### Fixed
+- `writeStdout()` now writes through the Node `process.stdout` stream with backpressure instead of a single `Bun.write(Bun.stdout)`. When the payload exceeds the OS pipe buffer (~64KB) and the reader is slow but stays open (`sd ... | cat`, `| grep`, `| wc`), the one-shot `Bun.write` busy-spun at 100% CPU on Linux and never exited — no EPIPE was raised because the reader had not closed. The stream path awaits `'drain'` instead of spinning; the early-close `| head` case (seeds-3024) is still covered by both the process-level EPIPE handler and the local guard. (seeds-18dc)
+- `sd doctor` now checks for and backfills all three `merge=union` `.gitattributes` entries — including `.seeds/plans.jsonl` — by sourcing the canonical line list from `init.ts` (`MERGE_UNION_LINES`) rather than a hardcoded issues/templates pair.
+
+### Internal
+- Extracted a shared plan-list rendering helper in `src/commands/plan.ts`, removing duplicated formatting logic. (#95)
+- Made the `sd sync` git-failure tests host-independent by driving failure through a failing pre-commit hook instead of host-specific git state.
+- Added `.seeds/plans.jsonl merge=union` to this repo's own `.gitattributes`.
+
 ## [0.5.12] - 2026-06-16
 
 Nightwatch patrol fixes (plan pl-a786): two narrow validation and refactor fixes from a nightwatch sweep.
