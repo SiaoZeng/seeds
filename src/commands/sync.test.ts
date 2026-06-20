@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { mkdirSync, realpathSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, realpathSync, writeFileSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -262,22 +262,24 @@ describe("sync — printSuccess + outputJson routing", () => {
 	});
 
 	function initBrokenRepo(name: string): string {
-		// git init with no user.email/user.name configured + force-disable any
-		// inherited git config so `git commit` fails when invoked. Forcing the
-		// commit identity to empty via env is unreliable; instead we make
-		// `git commit` fail by configuring an empty identity at the repo level
-		// and unsetting via core.askPass. Simpler trick: clobber GIT_AUTHOR_NAME
-		// in-process is fragile across the subprocess boundary, so we instead
-		// stage the .seeds dir under .gitignore'd config so the commit picks up
-		// nothing — but that hits the no-op branch. Reliable trigger: init the
-		// repo, write changes, then make .git read-only so git commit fails.
+		// Make `git commit` fail deterministically regardless of host git
+		// identity. Clearing GIT_AUTHOR_*/HOME is unreliable: Bun drops
+		// empty-string env vars when inheriting process.env, and git still
+		// auto-derives an identity from the OS (username@hostname via gecos)
+		// unless invoked with `-c user.useConfigOnly=true` — which production
+		// sync.ts never passes. Instead, install a pre-commit hook that always
+		// fails and pin it via repo-local core.hooksPath so a global hooksPath
+		// can't bypass it.
 		const repo = join(tmpDir, name);
 		mkdirSync(repo);
 		git(["init"], repo);
 		initSeedsDir(repo);
-		// No user.email/user.name set anywhere -> `git commit` will refuse with
-		// 'Please tell me who you are', returning a non-zero exit code. Override
-		// any inherited identity by pointing HOME at an empty dir.
+		const hooksDir = join(repo, ".git", "seeds-hooks");
+		mkdirSync(hooksDir, { recursive: true });
+		const hook = join(hooksDir, "pre-commit");
+		writeFileSync(hook, "#!/bin/sh\nexit 1\n");
+		chmodSync(hook, 0o755);
+		git(["config", "core.hooksPath", hooksDir], repo);
 		writeFileSync(
 			join(repo, ".seeds", "issues.jsonl"),
 			'{"id":"t-0003","title":"T","status":"open","type":"task","priority":2,"createdAt":"2026-01-01T00:00:00Z","updatedAt":"2026-01-01T00:00:00Z"}\n',
@@ -287,37 +289,7 @@ describe("sync — printSuccess + outputJson routing", () => {
 
 	test("git-failure throws so the top-level handler emits the canonical error payload", async () => {
 		const repo = initBrokenRepo("brokenrepo");
-		// Force the spawned git to find no user identity by clearing env vars
-		// and pointing HOME at an empty dir. We do this by monkey-patching
-		// Bun.spawnSync for the duration of the call. Simpler: set GIT_* env
-		// vars directly on this process — Bun.spawnSync inherits env.
-		const saved = {
-			name: process.env.GIT_AUTHOR_NAME,
-			email: process.env.GIT_AUTHOR_EMAIL,
-			cname: process.env.GIT_COMMITTER_NAME,
-			cemail: process.env.GIT_COMMITTER_EMAIL,
-			home: process.env.HOME,
-			xdg: process.env.XDG_CONFIG_HOME,
-			config: process.env.GIT_CONFIG_GLOBAL,
-		};
-		process.env.GIT_AUTHOR_NAME = "";
-		process.env.GIT_AUTHOR_EMAIL = "";
-		process.env.GIT_COMMITTER_NAME = "";
-		process.env.GIT_COMMITTER_EMAIL = "";
-		process.env.HOME = tmpDir;
-		process.env.XDG_CONFIG_HOME = tmpDir;
-		process.env.GIT_CONFIG_GLOBAL = "/dev/null";
-		try {
-			await expect(run([], join(repo, ".seeds"))).rejects.toThrow(/git commit failed/);
-		} finally {
-			process.env.GIT_AUTHOR_NAME = saved.name;
-			process.env.GIT_AUTHOR_EMAIL = saved.email;
-			process.env.GIT_COMMITTER_NAME = saved.cname;
-			process.env.GIT_COMMITTER_EMAIL = saved.cemail;
-			process.env.HOME = saved.home;
-			process.env.XDG_CONFIG_HOME = saved.xdg;
-			process.env.GIT_CONFIG_GLOBAL = saved.config;
-		}
+		await expect(run([], join(repo, ".seeds"))).rejects.toThrow(/git commit failed/);
 	});
 
 	test("sd sync --json git-failure (subprocess) emits {success:false,command:'sync',error}", async () => {
@@ -329,16 +301,6 @@ describe("sync — printSuccess + outputJson routing", () => {
 				cwd: repo,
 				stdout: "pipe",
 				stderr: "pipe",
-				env: {
-					...process.env,
-					GIT_AUTHOR_NAME: "",
-					GIT_AUTHOR_EMAIL: "",
-					GIT_COMMITTER_NAME: "",
-					GIT_COMMITTER_EMAIL: "",
-					HOME: tmpDir,
-					XDG_CONFIG_HOME: tmpDir,
-					GIT_CONFIG_GLOBAL: "/dev/null",
-				},
 			},
 		);
 
